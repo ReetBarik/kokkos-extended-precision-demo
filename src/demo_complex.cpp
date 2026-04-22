@@ -287,7 +287,7 @@ static double element_digits(__float128 dev, __float128 ref) {
   return d<0.0?0.0:(d>33.0?33.0:d);
 }
 
-AccStats compute_acc_fp128(const ql::fp128_t* dev, const __float128* ref, int n) {
+AccStats compute_acc_fp128(const quad::cuda_fp128::fp128_t* dev, const __float128* ref, int n) {
   std::vector<double> digs((size_t)n);
   for (int i=0;i<n;++i) digs[i]=element_digits(static_cast<__float128>(dev[i].value),ref[i]);
   std::sort(digs.begin(),digs.end());
@@ -324,9 +324,9 @@ struct ComplexOpResult {
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using vqc        = Kokkos::View<ql::quad_complex*,        Kokkos::LayoutRight, exec_space>;
+using vqc        = Kokkos::View<quad::cuda_fp128::quad_complex*,        Kokkos::LayoutRight, exec_space>;
 using vdc        = Kokkos::View<Kokkos::complex<double>*, Kokkos::LayoutRight, exec_space>;
-using v128       = Kokkos::View<ql::fp128_t*,             Kokkos::LayoutRight, exec_space>;
+using v128       = Kokkos::View<quad::cuda_fp128::fp128_t*,             Kokkos::LayoutRight, exec_space>;
 
 ComplexOpResult run_op(Op op, const Config& cfg) {
   const int n = cfg.batch;
@@ -347,12 +347,12 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
     auto mda=Kokkos::create_mirror_view(da), mdb=Kokkos::create_mirror_view(db);
     auto mqra=Kokkos::create_mirror_view(qra), mqrb=Kokkos::create_mirror_view(qrb);
     for (int i=0;i<n;++i) {
-      mqa(i)=ql::quad_complex(ql::fp128_t((__float128)ha_re[i]),ql::fp128_t((__float128)ha_im[i]));
-      mqb(i)=ql::quad_complex(ql::fp128_t((__float128)hb_re[i]),ql::fp128_t((__float128)hb_im[i]));
+      mqa(i)=quad::cuda_fp128::quad_complex(quad::cuda_fp128::fp128_t((__float128)ha_re[i]),quad::cuda_fp128::fp128_t((__float128)ha_im[i]));
+      mqb(i)=quad::cuda_fp128::quad_complex(quad::cuda_fp128::fp128_t((__float128)hb_re[i]),quad::cuda_fp128::fp128_t((__float128)hb_im[i]));
       mda(i)=Kokkos::complex<double>(ha_re[i],ha_im[i]);
       mdb(i)=Kokkos::complex<double>(hb_re[i],hb_im[i]);
-      mqra(i)=ql::fp128_t((__float128)ha_re[i]);
-      mqrb(i)=ql::fp128_t((__float128)ha_im[i]);
+      mqra(i)=quad::cuda_fp128::fp128_t((__float128)ha_re[i]);
+      mqrb(i)=quad::cuda_fp128::fp128_t((__float128)ha_im[i]);
     }
     Kokkos::deep_copy(qa,mqa); Kokkos::deep_copy(qb,mqb);
     Kokkos::deep_copy(da,mda); Kokkos::deep_copy(db,mdb);
@@ -373,45 +373,45 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
     case Op::Div:
       st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_div",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)/qb(i);});}); break;
     case Op::Abs:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_abs",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad_complex(ql::abs(qa(i)),ql::fp128_t(0.0));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_abs",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::quad_complex(quad::cuda_fp128::abs(qa(i)),quad::cuda_fp128::fp128_t(0.0));});}); break;
     case Op::Conj:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_conj",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::conj(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_conj",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::conj(qa(i));});}); break;
     case Op::Sqrt:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sqrt",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::sqrt(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sqrt",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::sqrt(qa(i));});}); break;
     case Op::Exp:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_exp",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::exp(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_exp",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::exp(qa(i));});}); break;
     case Op::Log:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::log(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::log(qa(i));});}); break;
     case Op::Log10:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log10",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::log10(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log10",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::log10(qa(i));});}); break;
     case Op::Sin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sin",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::sin(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sin",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::sin(qa(i));});}); break;
     case Op::Cos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cos",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::cos(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cos",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::cos(qa(i));});}); break;
     case Op::Tan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tan",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::tan(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tan",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::tan(qa(i));});}); break;
     case Op::Asin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asin",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::asin(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asin",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::asin(qa(i));});}); break;
     case Op::Acos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acos",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::acos(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acos",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::acos(qa(i));});}); break;
     case Op::Atan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atan",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::atan(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atan",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::atan(qa(i));});}); break;
     case Op::Sinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sinh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::sinh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sinh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::sinh(qa(i));});}); break;
     case Op::Cosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cosh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::cosh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cosh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::cosh(qa(i));});}); break;
     case Op::Tanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tanh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::tanh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tanh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::tanh(qa(i));});}); break;
     case Op::Asinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asinh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::asinh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asinh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::asinh(qa(i));});}); break;
     case Op::Acosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acosh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::acosh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acosh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::acosh(qa(i));});}); break;
     case Op::Atanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atanh",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::atanh(qa(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atanh",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::atanh(qa(i));});}); break;
     case Op::Pow:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_pow",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::pow(qa(i),qb(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_pow",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::pow(qa(i),qb(i));});}); break;
     case Op::Polar:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_polar",pol,KOKKOS_LAMBDA(int i){qr(i)=ql::quad::polar(qra(i),qrb(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_polar",pol,KOKKOS_LAMBDA(int i){qr(i)=quad::cuda_fp128::polar(qra(i),qrb(i));});}); break;
   }
 
   // ---- double complex kernels ----------------------------------------------
@@ -473,7 +473,7 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   auto mqr=Kokkos::create_mirror_view(qr); Kokkos::deep_copy(mqr,qr);
   auto mdr=Kokkos::create_mirror_view(dr); Kokkos::deep_copy(mdr,dr);
 
-  std::vector<ql::fp128_t> qr_re(n), qr_im(n);
+  std::vector<quad::cuda_fp128::fp128_t> qr_re(n), qr_im(n);
   std::vector<double>      dr_re(n), dr_im(n);
   for (int i=0;i<n;++i) {
     qr_re[i]=mqr(i).re; qr_im[i]=mqr(i).im;

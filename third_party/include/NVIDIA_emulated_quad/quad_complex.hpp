@@ -14,7 +14,8 @@
 #include <type_traits>
 #include "quad_math.hpp"
 
-namespace ql {
+namespace quad {
+namespace cuda_fp128 {
 
 // Minimal quad_complex type for quad precision complex arithmetic
 // Only implements what is actually needed by kernels
@@ -51,23 +52,23 @@ struct quad_complex {
     // Compound assignment operators
     KOKKOS_INLINE_FUNCTION
     quad_complex& operator+=(quad_complex const& other) {
-        re = quad::add(re, other.re);
-        im = quad::add(im, other.im);
+        re = add(re, other.re);
+        im = add(im, other.im);
         return *this;
     }
 
     KOKKOS_INLINE_FUNCTION
     quad_complex& operator-=(quad_complex const& other) {
-        re = quad::sub(re, other.re);
-        im = quad::sub(im, other.im);
+        re = sub(re, other.re);
+        im = sub(im, other.im);
         return *this;
     }
 
     KOKKOS_INLINE_FUNCTION
     quad_complex& operator*=(quad_complex const& other) {
         // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
-        fp128_t new_re = quad::sub(quad::mul(re, other.re), quad::mul(im, other.im));
-        fp128_t new_im = quad::add(quad::mul(re, other.im), quad::mul(im, other.re));
+        fp128_t new_re = sub(mul(re, other.re), mul(im, other.im));
+        fp128_t new_im = add(mul(re, other.im), mul(im, other.re));
         re = new_re;
         im = new_im;
         return *this;
@@ -76,9 +77,9 @@ struct quad_complex {
     KOKKOS_INLINE_FUNCTION
     quad_complex& operator/=(quad_complex const& other) {
         // (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c^2 + d^2)
-        fp128_t denom = quad::add(quad::mul(other.re, other.re), quad::mul(other.im, other.im));
-        fp128_t new_re = quad::div(quad::add(quad::mul(re, other.re), quad::mul(im, other.im)), denom);
-        fp128_t new_im = quad::div(quad::sub(quad::mul(im, other.re), quad::mul(re, other.im)), denom);
+        fp128_t denom = add(mul(other.re, other.re), mul(other.im, other.im));
+        fp128_t new_re = div(add(mul(re, other.re), mul(im, other.im)), denom);
+        fp128_t new_im = div(sub(mul(im, other.re), mul(re, other.im)), denom);
         re = new_re;
         im = new_im;
         return *this;
@@ -97,13 +98,13 @@ struct quad_complex {
 // Arithmetic operators - only implement what is needed
 KOKKOS_INLINE_FUNCTION
 quad_complex operator+(quad_complex const& a, quad_complex const& b) {
-    quad_complex result(quad::add(a.re, b.re), quad::add(a.im, b.im));
+    quad_complex result(add(a.re, b.re), add(a.im, b.im));
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
 quad_complex operator-(quad_complex const& a, quad_complex const& b) {
-    quad_complex result(quad::sub(a.re, b.re), quad::sub(a.im, b.im));
+    quad_complex result(sub(a.re, b.re), sub(a.im, b.im));
     return result;
 }
 
@@ -111,8 +112,8 @@ KOKKOS_INLINE_FUNCTION
 quad_complex operator*(quad_complex const& a, quad_complex const& b) {
     // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
     quad_complex result(
-        quad::sub(quad::mul(a.re, b.re), quad::mul(a.im, b.im)),
-        quad::add(quad::mul(a.re, b.im), quad::mul(a.im, b.re))
+        sub(mul(a.re, b.re), mul(a.im, b.im)),
+        add(mul(a.re, b.im), mul(a.im, b.re))
     );
     return result;
 }
@@ -120,17 +121,17 @@ quad_complex operator*(quad_complex const& a, quad_complex const& b) {
 KOKKOS_INLINE_FUNCTION
 quad_complex operator/(quad_complex const& a, quad_complex const& b) {
     // (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c^2 + d^2)
-    fp128_t denom = quad::add(quad::mul(b.re, b.re), quad::mul(b.im, b.im));
+    fp128_t denom = add(mul(b.re, b.re), mul(b.im, b.im));
     quad_complex result(
-        quad::div(quad::add(quad::mul(a.re, b.re), quad::mul(a.im, b.im)), denom),
-        quad::div(quad::sub(quad::mul(a.im, b.re), quad::mul(a.re, b.im)), denom)
+        div(add(mul(a.re, b.re), mul(a.im, b.im)), denom),
+        div(sub(mul(a.im, b.re), mul(a.re, b.im)), denom)
     );
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
 quad_complex operator-(quad_complex const& a) {
-    quad_complex result(quad::neg(a.re), quad::neg(a.im));
+    quad_complex result(neg(a.re), neg(a.im));
     return result;
 }
 
@@ -151,7 +152,7 @@ bool operator!=(quad_complex const& a, quad_complex const& b) {
 template<typename T>
 struct is_quad_type {
     static constexpr bool value = 
-        quad::is_fp128_type<T>::value || 
+        is_fp128_type<T>::value || 
         std::is_same<T, quad_complex>::value;
 };
 
@@ -165,7 +166,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator+(T a, quad_complex const& b) {
     fp128_t scalar = fp128_t(a);
-    quad_complex result(quad::add(scalar, b.re), b.im);
+    quad_complex result(add(scalar, b.re), b.im);
     return result;
 }
 
@@ -174,7 +175,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator+(quad_complex const& a, T b) {
     fp128_t scalar = fp128_t(b);
-    quad_complex result(quad::add(a.re, scalar), a.im);
+    quad_complex result(add(a.re, scalar), a.im);
     return result;
 }
 
@@ -184,7 +185,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator-(T a, quad_complex const& b) {
     fp128_t scalar = fp128_t(a);
-    quad_complex result(quad::sub(scalar, b.re), quad::neg(b.im));
+    quad_complex result(sub(scalar, b.re), neg(b.im));
     return result;
 }
 
@@ -193,7 +194,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator-(quad_complex const& a, T b) {
     fp128_t scalar = fp128_t(b);
-    quad_complex result(quad::sub(a.re, scalar), a.im);
+    quad_complex result(sub(a.re, scalar), a.im);
     return result;
 }
 
@@ -203,7 +204,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator*(T a, quad_complex const& b) {
     fp128_t scalar = fp128_t(a);
-    quad_complex result(quad::mul(scalar, b.re), quad::mul(scalar, b.im));
+    quad_complex result(mul(scalar, b.re), mul(scalar, b.im));
     return result;
 }
 
@@ -212,7 +213,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator*(quad_complex const& a, T b) {
     fp128_t scalar = fp128_t(b);
-    quad_complex result(quad::mul(a.re, scalar), quad::mul(a.im, scalar));
+    quad_complex result(mul(a.re, scalar), mul(a.im, scalar));
     return result;
 }
 
@@ -223,10 +224,10 @@ typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator/(T a, quad_complex const& b) {
     // a / (c + di) = a * (c - di) / (c^2 + d^2)
     fp128_t scalar = fp128_t(a);
-    fp128_t denom = quad::add(quad::mul(b.re, b.re), quad::mul(b.im, b.im));
+    fp128_t denom = add(mul(b.re, b.re), mul(b.im, b.im));
     quad_complex result(
-        quad::div(quad::mul(scalar, b.re), denom),
-        quad::div(quad::neg(quad::mul(scalar, b.im)), denom)
+        div(mul(scalar, b.re), denom),
+        div(neg(mul(scalar, b.im)), denom)
     );
     return result;
 }
@@ -236,7 +237,7 @@ KOKKOS_INLINE_FUNCTION
 typename std::enable_if<!is_quad_type<T>::value, quad_complex>::type
 operator/(quad_complex const& a, T b) {
     fp128_t scalar = fp128_t(b);
-    quad_complex result(quad::div(a.re, scalar), quad::div(a.im, scalar));
+    quad_complex result(div(a.re, scalar), div(a.im, scalar));
     return result;
 }
 
@@ -246,49 +247,49 @@ operator/(quad_complex const& a, T b) {
 // Multiplication: quad_complex * fp128_t
 KOKKOS_INLINE_FUNCTION
 quad_complex operator*(quad_complex const& a, fp128_t b) {
-    quad_complex result(quad::mul(a.re, b.value), quad::mul(a.im, b.value));
+    quad_complex result(mul(a.re, b.value), mul(a.im, b.value));
     return result;
 }
 
 // Multiplication: fp128_t * quad_complex
 KOKKOS_INLINE_FUNCTION
 quad_complex operator*(fp128_t a, quad_complex const& b) {
-    quad_complex result(quad::mul(a.value, b.re), quad::mul(a.value, b.im));
+    quad_complex result(mul(a.value, b.re), mul(a.value, b.im));
     return result;
 }
 
 // Addition: quad_complex + fp128_t
 KOKKOS_INLINE_FUNCTION
 quad_complex operator+(quad_complex const& a, fp128_t b) {
-    quad_complex result(quad::add(a.re, b.value), a.im);
+    quad_complex result(add(a.re, b.value), a.im);
     return result;
 }
 
 // Addition: fp128_t + quad_complex
 KOKKOS_INLINE_FUNCTION
 quad_complex operator+(fp128_t a, quad_complex const& b) {
-    quad_complex result(quad::add(a.value, b.re), b.im);
+    quad_complex result(add(a.value, b.re), b.im);
     return result;
 }
 
 // Subtraction: quad_complex - fp128_t
 KOKKOS_INLINE_FUNCTION
 quad_complex operator-(quad_complex const& a, fp128_t b) {
-    quad_complex result(quad::sub(a.re, b.value), a.im);
+    quad_complex result(sub(a.re, b.value), a.im);
     return result;
 }
 
 // Subtraction: fp128_t - quad_complex
 KOKKOS_INLINE_FUNCTION
 quad_complex operator-(fp128_t a, quad_complex const& b) {
-    quad_complex result(quad::sub(a.value, b.re), quad::neg(b.im));
+    quad_complex result(sub(a.value, b.re), neg(b.im));
     return result;
 }
 
 // Division: quad_complex / fp128_t
 KOKKOS_INLINE_FUNCTION
 quad_complex operator/(quad_complex const& a, fp128_t b) {
-    quad_complex result(quad::div(a.re, b.value), quad::div(a.im, b.value));
+    quad_complex result(div(a.re, b.value), div(a.im, b.value));
     return result;
 }
 
@@ -328,55 +329,56 @@ operator!=(quad_complex const& a, T b) {
 KOKKOS_INLINE_FUNCTION
 fp128_t abs(quad_complex const& z) {
     // |z| = sqrt(re^2 + im^2)
-    fp128_t re_sq = quad::mul(z.re, z.re);
-    fp128_t im_sq = quad::mul(z.im, z.im);
-    return quad::sqrt(quad::add(re_sq, im_sq));
+    fp128_t re_sq = mul(z.re, z.re);
+    fp128_t im_sq = mul(z.im, z.im);
+    return sqrt(add(re_sq, im_sq));
 }
 
-} // namespace ql
+} // namespace cuda_fp128
+} // namespace quad
 
-// Function wrappers for quad_complex in ql::quad namespace
+// Function wrappers for quad_complex in quad::cuda_fp128 namespace
 // Matching the pattern from quad_math.hpp for consistency
-namespace ql {
 namespace quad {
+namespace cuda_fp128 {
 
 // Basic arithmetic operations for quad_complex
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex add(ql::quad_complex const& a, ql::quad_complex const& b) {
-    ql::quad_complex result(ql::quad::add(a.re, b.re), ql::quad::add(a.im, b.im));
+quad_complex add(quad_complex const& a, quad_complex const& b) {
+    quad_complex result(add(a.re, b.re), add(a.im, b.im));
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex sub(ql::quad_complex const& a, ql::quad_complex const& b) {
-    ql::quad_complex result(ql::quad::sub(a.re, b.re), ql::quad::sub(a.im, b.im));
+quad_complex sub(quad_complex const& a, quad_complex const& b) {
+    quad_complex result(sub(a.re, b.re), sub(a.im, b.im));
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex mul(ql::quad_complex const& a, ql::quad_complex const& b) {
+quad_complex mul(quad_complex const& a, quad_complex const& b) {
     // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
-    ql::quad_complex result(
-        ql::quad::sub(ql::quad::mul(a.re, b.re), ql::quad::mul(a.im, b.im)),
-        ql::quad::add(ql::quad::mul(a.re, b.im), ql::quad::mul(a.im, b.re))
+    quad_complex result(
+        sub(mul(a.re, b.re), mul(a.im, b.im)),
+        add(mul(a.re, b.im), mul(a.im, b.re))
     );
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex div(ql::quad_complex const& a, ql::quad_complex const& b) {
+quad_complex div(quad_complex const& a, quad_complex const& b) {
     // (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c^2 + d^2)
-    fp128_t denom = ql::quad::add(ql::quad::mul(b.re, b.re), ql::quad::mul(b.im, b.im));
-    ql::quad_complex result(
-        ql::quad::div(ql::quad::add(ql::quad::mul(a.re, b.re), ql::quad::mul(a.im, b.im)), denom),
-        ql::quad::div(ql::quad::sub(ql::quad::mul(a.im, b.re), ql::quad::mul(a.re, b.im)), denom)
+    fp128_t denom = add(mul(b.re, b.re), mul(b.im, b.im));
+    quad_complex result(
+        div(add(mul(a.re, b.re), mul(a.im, b.im)), denom),
+        div(sub(mul(a.im, b.re), mul(a.re, b.im)), denom)
     );
     return result;
 }
 
 // Math functions for quad_complex
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex sqrt(ql::quad_complex const& z) {
+quad_complex sqrt(quad_complex const& z) {
     // Complex square root matching Kokkos::complex<T>::sqrt strategy:
     // Split into two branches to avoid catastrophic cancellation.
     // When re > 0: (mag + re) is well-conditioned, derive im by division.
@@ -384,197 +386,189 @@ ql::quad_complex sqrt(ql::quad_complex const& z) {
     // This preserves tiny imaginary parts (e.g. from ieps prescriptions)
     // that would be destroyed by computing sqrt((mag - re)/2) directly
     // when mag ≈ re.
-    fp128_t r = ql::abs(z);
+    fp128_t r = abs(z);
     if (r == fp128_t(0.0q)) {
-        ql::quad_complex result(fp128_t(0.0q), fp128_t(0.0q));
+        quad_complex result(fp128_t(0.0q), fp128_t(0.0q));
         return result;
     }
     fp128_t re_out, im_out;
     if (z.re > fp128_t(0.0q)) {
-        re_out = ql::quad::sqrt(ql::quad::div(ql::quad::add(r, z.re), fp128_t(2.0q)));
-        im_out = ql::quad::div(z.im, ql::quad::mul(fp128_t(2.0q), re_out));
+        re_out = sqrt(div(add(r, z.re), fp128_t(2.0q)));
+        im_out = div(z.im, mul(fp128_t(2.0q), re_out));
     } else {
-        im_out = ql::quad::sqrt(ql::quad::div(ql::quad::sub(r, z.re), fp128_t(2.0q)));
+        im_out = sqrt(div(sub(r, z.re), fp128_t(2.0q)));
     if (z.im < fp128_t(0.0q)) {
-            im_out = ql::quad::neg(im_out);
+            im_out = neg(im_out);
         }
-        re_out = ql::quad::div(z.im, ql::quad::mul(fp128_t(2.0q), im_out));
+        re_out = div(z.im, mul(fp128_t(2.0q), im_out));
     }
-    ql::quad_complex result(re_out, im_out);
+    quad_complex result(re_out, im_out);
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-fp128_t abs(ql::quad_complex const& z) {
-    // |z| = sqrt(re^2 + im^2)
-    fp128_t re_sq = ql::quad::mul(z.re, z.re);
-    fp128_t im_sq = ql::quad::mul(z.im, z.im);
-    return ql::quad::sqrt(ql::quad::add(re_sq, im_sq));
-}
-
-KOKKOS_INLINE_FUNCTION
-ql::quad_complex log(ql::quad_complex const& z) {
+quad_complex log(quad_complex const& z) {
     // log(z) = log(|z|) + i * arg(z)
     // arg(z) = atan2(im, re)
-    fp128_t mag = ql::abs(z);
-    fp128_t arg = ql::quad::atan2(z.im, z.re);
-    ql::quad_complex result(ql::quad::log(mag), arg);
+    fp128_t mag = abs(z);
+    fp128_t arg = atan2(z.im, z.re);
+    quad_complex result(log(mag), arg);
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex neg(ql::quad_complex const& z) {
-    ql::quad_complex result(ql::quad::neg(z.re), ql::quad::neg(z.im));
+quad_complex neg(quad_complex const& z) {
+    quad_complex result(neg(z.re), neg(z.im));
     return result;
 }
 
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex conj(ql::quad_complex const& z) {
-    ql::quad_complex result(z.re, ql::quad::neg(z.im));
+quad_complex conj(quad_complex const& z) {
+    quad_complex result(z.re, neg(z.im));
     return result;
 }
 
 // exp(a + bi) = exp(a) * (cos(b) + i*sin(b))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex exp(ql::quad_complex const& z) {
-    fp128_t ea = ql::quad::exp(z.re);
-    return ql::quad_complex(
-        ql::quad::mul(ea, ql::quad::cos(z.im)),
-        ql::quad::mul(ea, ql::quad::sin(z.im))
+quad_complex exp(quad_complex const& z) {
+    fp128_t ea = exp(z.re);
+    return quad_complex(
+        mul(ea, cos(z.im)),
+        mul(ea, sin(z.im))
     );
 }
 
 // log10(z) = log(z) / log(10)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex log10(ql::quad_complex const& z) {
-    ql::quad_complex lz = ql::quad::log(z);
-    fp128_t ln10 = ql::quad::log(fp128_t(10.0));
-    return ql::quad_complex(
-        ql::quad::div(lz.re, ln10),
-        ql::quad::div(lz.im, ln10)
+quad_complex log10(quad_complex const& z) {
+    quad_complex lz = log(z);
+    fp128_t ln10 = log(fp128_t(10.0));
+    return quad_complex(
+        div(lz.re, ln10),
+        div(lz.im, ln10)
     );
 }
 
 // sin(a + bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex sin(ql::quad_complex const& z) {
-    return ql::quad_complex(
-        ql::quad::mul(ql::quad::sin(z.re), ql::quad::cosh(z.im)),
-        ql::quad::mul(ql::quad::cos(z.re), ql::quad::sinh(z.im))
+quad_complex sin(quad_complex const& z) {
+    return quad_complex(
+        mul(sin(z.re), cosh(z.im)),
+        mul(cos(z.re), sinh(z.im))
     );
 }
 
 // cos(a + bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex cos(ql::quad_complex const& z) {
-    return ql::quad_complex(
-        ql::quad::mul(ql::quad::cos(z.re), ql::quad::cosh(z.im)),
-        ql::quad::neg(ql::quad::mul(ql::quad::sin(z.re), ql::quad::sinh(z.im)))
+quad_complex cos(quad_complex const& z) {
+    return quad_complex(
+        mul(cos(z.re), cosh(z.im)),
+        neg(mul(sin(z.re), sinh(z.im)))
     );
 }
 
 // tan(z) = sin(z) / cos(z)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex tan(ql::quad_complex const& z) {
-    return ql::quad::div(ql::quad::sin(z), ql::quad::cos(z));
+quad_complex tan(quad_complex const& z) {
+    return div(sin(z), cos(z));
 }
 
 // asin(z) = -i * log(iz + sqrt(1 - z^2))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex asin(ql::quad_complex const& z) {
-    ql::quad_complex iz(ql::quad::neg(z.im), z.re);
-    ql::quad_complex z2 = ql::quad::mul(z, z);
-    ql::quad_complex one_minus_z2(ql::quad::sub(fp128_t(1.0), z2.re), ql::quad::neg(z2.im));
-    ql::quad_complex sq = ql::quad::sqrt(one_minus_z2);
-    ql::quad_complex lg = ql::quad::log(ql::quad::add(iz, sq));
-    return ql::quad_complex(lg.im, ql::quad::neg(lg.re));
+quad_complex asin(quad_complex const& z) {
+    quad_complex iz(neg(z.im), z.re);
+    quad_complex z2 = mul(z, z);
+    quad_complex one_minus_z2(sub(fp128_t(1.0), z2.re), neg(z2.im));
+    quad_complex sq = sqrt(one_minus_z2);
+    quad_complex lg = log(add(iz, sq));
+    return quad_complex(lg.im, neg(lg.re));
 }
 
 // acos(z) = pi/2 - asin(z)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex acos(ql::quad_complex const& z) {
+quad_complex acos(quad_complex const& z) {
     constexpr __fp128_base pi_over_2 = __fp128_base(1.57079632679489661923132169163975144209858469968755q);
-    ql::quad_complex as = ql::quad::asin(z);
-    return ql::quad_complex(ql::quad::sub(fp128_t(pi_over_2), as.re), ql::quad::neg(as.im));
+    quad_complex as = asin(z);
+    return quad_complex(sub(fp128_t(pi_over_2), as.re), neg(as.im));
 }
 
 // atan(z) = i/2 * log((1 - iz) / (1 + iz))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex atan(ql::quad_complex const& z) {
-    ql::quad_complex iz(ql::quad::neg(z.im), z.re);
-    ql::quad_complex one(fp128_t(1.0), fp128_t(0.0));
-    ql::quad_complex lg = ql::quad::log(ql::quad::div(ql::quad::sub(one, iz), ql::quad::add(one, iz)));
+quad_complex atan(quad_complex const& z) {
+    quad_complex iz(neg(z.im), z.re);
+    quad_complex one(fp128_t(1.0), fp128_t(0.0));
+    quad_complex lg = log(div(sub(one, iz), add(one, iz)));
     fp128_t half(0.5);
-    return ql::quad_complex(ql::quad::neg(ql::quad::mul(half, lg.im)), ql::quad::mul(half, lg.re));
+    return quad_complex(neg(mul(half, lg.im)), mul(half, lg.re));
 }
 
 // sinh(z) = (exp(z) - exp(-z)) / 2
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex sinh(ql::quad_complex const& z) {
-    ql::quad_complex ez  = ql::quad::exp(z);
-    ql::quad_complex emz = ql::quad::exp(ql::quad::neg(z));
-    ql::quad_complex d   = ql::quad::sub(ez, emz);
+quad_complex sinh(quad_complex const& z) {
+    quad_complex ez  = exp(z);
+    quad_complex emz = exp(neg(z));
+    quad_complex d   = sub(ez, emz);
     fp128_t two(2.0);
-    return ql::quad_complex(ql::quad::div(d.re, two), ql::quad::div(d.im, two));
+    return quad_complex(div(d.re, two), div(d.im, two));
 }
 
 // cosh(z) = (exp(z) + exp(-z)) / 2
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex cosh(ql::quad_complex const& z) {
-    ql::quad_complex ez  = ql::quad::exp(z);
-    ql::quad_complex emz = ql::quad::exp(ql::quad::neg(z));
-    ql::quad_complex s   = ql::quad::add(ez, emz);
+quad_complex cosh(quad_complex const& z) {
+    quad_complex ez  = exp(z);
+    quad_complex emz = exp(neg(z));
+    quad_complex s   = add(ez, emz);
     fp128_t two(2.0);
-    return ql::quad_complex(ql::quad::div(s.re, two), ql::quad::div(s.im, two));
+    return quad_complex(div(s.re, two), div(s.im, two));
 }
 
 // tanh(z) = sinh(z) / cosh(z)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex tanh(ql::quad_complex const& z) {
-    return ql::quad::div(ql::quad::sinh(z), ql::quad::cosh(z));
+quad_complex tanh(quad_complex const& z) {
+    return div(sinh(z), cosh(z));
 }
 
 // asinh(z) = log(z + sqrt(z^2 + 1))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex asinh(ql::quad_complex const& z) {
-    ql::quad_complex z2 = ql::quad::mul(z, z);
-    ql::quad_complex z2p1(ql::quad::add(z2.re, fp128_t(1.0)), z2.im);
-    return ql::quad::log(ql::quad::add(z, ql::quad::sqrt(z2p1)));
+quad_complex asinh(quad_complex const& z) {
+    quad_complex z2 = mul(z, z);
+    quad_complex z2p1(add(z2.re, fp128_t(1.0)), z2.im);
+    return log(add(z, sqrt(z2p1)));
 }
 
 // acosh(z) = log(z + sqrt(z^2 - 1))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex acosh(ql::quad_complex const& z) {
-    ql::quad_complex z2 = ql::quad::mul(z, z);
-    ql::quad_complex z2m1(ql::quad::sub(z2.re, fp128_t(1.0)), z2.im);
-    return ql::quad::log(ql::quad::add(z, ql::quad::sqrt(z2m1)));
+quad_complex acosh(quad_complex const& z) {
+    quad_complex z2 = mul(z, z);
+    quad_complex z2m1(sub(z2.re, fp128_t(1.0)), z2.im);
+    return log(add(z, sqrt(z2m1)));
 }
 
 // atanh(z) = 1/2 * log((1 + z) / (1 - z))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex atanh(ql::quad_complex const& z) {
-    ql::quad_complex one(fp128_t(1.0), fp128_t(0.0));
-    ql::quad_complex lg = ql::quad::log(ql::quad::div(ql::quad::add(one, z), ql::quad::sub(one, z)));
+quad_complex atanh(quad_complex const& z) {
+    quad_complex one(fp128_t(1.0), fp128_t(0.0));
+    quad_complex lg = log(div(add(one, z), sub(one, z)));
     fp128_t half(0.5);
-    return ql::quad_complex(ql::quad::mul(half, lg.re), ql::quad::mul(half, lg.im));
+    return quad_complex(mul(half, lg.re), mul(half, lg.im));
 }
 
 // pow(z, w) = exp(w * log(z))
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex pow(ql::quad_complex const& z, ql::quad_complex const& w) {
-    return ql::quad::exp(ql::quad::mul(w, ql::quad::log(z)));
+quad_complex pow(quad_complex const& z, quad_complex const& w) {
+    return exp(mul(w, log(z)));
 }
 
 // polar(r, theta) = r*cos(theta) + i*r*sin(theta)
 KOKKOS_INLINE_FUNCTION
-ql::quad_complex polar(fp128_t r, fp128_t theta) {
-    return ql::quad_complex(
-        ql::quad::mul(r, ql::quad::cos(theta)),
-        ql::quad::mul(r, ql::quad::sin(theta))
+quad_complex polar(fp128_t r, fp128_t theta) {
+    return quad_complex(
+        mul(r, cos(theta)),
+        mul(r, sin(theta))
     );
 }
 
+} // namespace cuda_fp128
 } // namespace quad
-} // namespace ql
 
 #endif // KOKKOS_ENABLE_CUDA

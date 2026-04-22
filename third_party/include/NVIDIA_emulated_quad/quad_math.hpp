@@ -14,8 +14,8 @@
 #include <crt/device_fp128_functions.h>
 #include <type_traits>
 
-namespace ql {
 namespace quad {
+namespace cuda_fp128 {
 
 // Forward declaration of underlying type
 #ifdef __FLOAT128_CPP_SPELLING_ENABLED__
@@ -197,22 +197,22 @@ struct fp128_wrapper {
 // Type alias: fp128_t is now a wrapper struct with operator overloading
 using fp128_t = fp128_wrapper;
 
-} // namespace quad
+} // namespace cuda_fp128
+
+namespace cuda_fp128 {
 
 // Forward declaration of quad_complex (defined in quad_complex.hpp)
 // Needed to exclude it from template operators without circular dependency
 struct quad_complex;
 
-namespace quad {
-
 // Helper type trait to exclude fp128_t and quad_complex from template operators
 // This prevents template operators from matching when T = fp128_t, fp128_wrapper, or quad_complex
 template<typename T>
 struct is_fp128_type {
-    static constexpr bool value = 
-        std::is_same<T, fp128_t>::value || 
+    static constexpr bool value =
+        std::is_same<T, fp128_t>::value ||
         std::is_same<T, fp128_wrapper>::value ||
-        std::is_same<T, ql::quad_complex>::value;
+        std::is_same<T, quad_complex>::value;
 };
 
 // Mixed-type arithmetic operators (matching Kokkos::complex behavior)
@@ -764,12 +764,12 @@ fp128_t atan2(fp128_t y, fp128_t x) {
 #endif
 }
 
+} // namespace cuda_fp128
+
+// Type alias for convenience: quad::fp128_t -> quad::cuda_fp128::fp128_t
+using fp128_t = cuda_fp128::fp128_t;
+
 } // namespace quad
-
-// Type alias for convenience (matches examples)
-using fp128_t = quad::fp128_t;
-
-} // namespace ql
 
 // Note: fp128_t is now a wrapper struct (fp128_wrapper) that enables:
 // 1. Operator overloading (a + b, a - b, etc.) using __nv_fp128_* functions
