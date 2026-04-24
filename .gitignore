@@ -4,4 +4,5 @@
 *.cobaltlog
 *.error
 *.output
+PLAN_*.md
 
