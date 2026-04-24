@@ -4,7 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repo benchmarks CUDA FP128 (128-bit floating-point) kernels built with Kokkos, comparing device results against host `quadmath.h` references to verify accuracy. It produces two executables: one for 39 real math operations and one for 24 complex math operations.
+This is the `main` branch. It benchmarks two extended-precision backends side by side inside Kokkos CUDA kernels:
+
+- **CUDA Emulated FP128** (`quad::cuda_fp128::fp128_t`): ~33 decimal digits, requires compute ≥ 10.0 (sm_100, Blackwell)
+- **Kokkos DD (double-double)** (`quad::ddfun::ddouble`): ~30–31 decimal digits, portable to any CUDA GPU
+
+Each operation runs on FP128, DD, and FP64. The output table shows **slowdown vs FP64** and **accuracy in decimal digits** for both backends side by side.
+
+It produces two executables: `kokkos_ep_demo` (39 real math ops) and `kokkos_ep_demo_complex` (24 complex math ops).
+
+## Branch structure
+
+| Branch | Backend(s) | GPU requirement |
+|---|---|---|
+| `main` | CUDA FP128 + Kokkos DD | compute ≥ 10.0 (sm_100) |
+| `CUDAFP128Kokkos` | CUDA FP128 only | compute ≥ 10.0 (sm_100) |
+| `ddfunKokkos` | Kokkos DD only | any CUDA-capable GPU |
 
 ## Build
 
@@ -32,7 +47,7 @@ cmake --build build -j$(nproc)
 ## Running Benchmarks
 
 ```bash
-# All real operations (single table output)
+# All real operations — FP128 and DD side by side
 ./build/kokkos_ep_demo --batch 500000 --repeats 5
 
 # Single real operation
@@ -55,40 +70,55 @@ Scripts for batch runs: `scripts/run_all_ops.sh` and `scripts/run_all_complex_op
 
 ```
 Demo Executables (src/demo_real.cpp, src/demo_complex.cpp)
-    └─ CUDA FP128 Wrapper Layer
-       (third_party/include/NVIDIA_emulated_quad/quad_math.hpp, quad_complex.hpp)
-       └─ Kokkos Runtime + CUDA Backend
+    ├─ CUDA FP128 Backend
+    │   (third_party/include/NVIDIA_emulated_quad/quad_math.hpp, quad_complex.hpp)
+    ├─ Kokkos DD Backend
+    │   (third_party/include/dd_math.hpp, dd_complex.hpp)
+    └─ Kokkos Runtime + CUDA Backend
 ```
 
-### FP128 Wrapper (`third_party/include/NVIDIA_emulated_quad/`)
+### CUDA FP128 Wrapper (`third_party/include/NVIDIA_emulated_quad/`)
 
-`quad_math.hpp` defines `fp128_t` (a wrapper around `__float128`/`__nv_fp128_base`) with full operator overloading. The critical design is the dual-path compilation:
+`quad_math.hpp` defines `fp128_t` in `namespace quad::cuda_fp128`. Critical dual-path design:
 
 ```cpp
 #ifdef __CUDA_ARCH__
-    // Device: calls NVIDIA __nv_fp128_* functions
+    // Device: calls NVIDIA __nv_fp128_* functions (sm_100+ only)
 #else
     // Host: uses native C++ operators / quadmath.h
 #endif
 ```
 
-All functions are marked `KOKKOS_INLINE_FUNCTION` and have explicit (non-defaulted) copy constructors/assignments because NVCC requires explicit function bodies for device code generation.
+`quad_complex.hpp` defines `quad_complex {fp128_t re; fp128_t im;}` with full math in `quad::cuda_fp128`.
 
-`quad_complex.hpp` defines a minimal `quad_complex` struct (not `Kokkos::complex<fp128_t>`) because the Kokkos template causes device code generation issues. It stores `fp128_t` real and imaginary parts and dispatches through `quad::cuda_fp128::*` functions.
+### Double-Double Math Library (`third_party/include/`)
+
+`dd_math.hpp` defines `ddouble { double hi; double lo; }` in `namespace quad::ddfun`. Key algorithms:
+
+- **TwoSum (Knuth)**: basis of `ddadd` / `ddsub` — error-free summation
+- **TwoProduct (Dekker splitting)**: basis of `ddmul` / `dddiv` — no FMA required
+- **Constants**: constructed from IEEE 754 bit patterns via `make_dd()` for both host (`std::memcpy`) and device (`__longlong_as_double`)
+
+All functions are `KOKKOS_INLINE_FUNCTION`, ported from DDFUN (David H. Bailey, Lawrence Berkeley National Lab).
+
+`dd_complex.hpp` defines `ddcomplex { ddouble re; ddouble im; }` with full complex math via `quad::ddfun::` free functions.
 
 ### Demo Executables (`src/`)
 
 Each demo follows the same pattern:
 1. Parse args → generate operation-specific random inputs on host
-2. Compute `quadmath.h` host reference (ground truth)
-3. Deep copy inputs to Kokkos device Views
-4. Run 2 warmup + N timed `Kokkos::parallel_for` launches with `Kokkos::fence()` after each
-5. Deep copy results back, compute per-element relative error → convert to "digits of accuracy" (`-log10(rel_error)`, clamped to [0, 33])
-6. Print formatted table: FP128 vs FP64 timing and accuracy statistics
+2. Compute `quadmath.h` host reference (ground truth, ~34 digits)
+3. Deep copy inputs to Kokkos device Views for FP128, DD, and FP64
+4. Run 2 warmup + N timed `Kokkos::parallel_for` launches for all three backends
+5. Deep copy FP128 and DD results back, compute per-element relative error → "digits of accuracy" (`-log10(rel_error)`, capped at 33.0 for FP128 / 31.0 for DD)
+6. Compute slowdown = backend_time / fp64_time per statistic (min/max/median/mean)
+7. Print formatted table: FP128 and DD slowdown + accuracy side by side
 
-Timing includes `Kokkos::fence()` overhead (synchronization cost), not raw kernel time.
+### Namespaces
 
-Accuracy is reported as precise decimal digits: 33 = perfect FP128 match, 0 = completely wrong.
+- `quad::cuda_fp128` — CUDA emulated FP128 types and math
+- `quad::ddfun` — Kokkos double-double types and math
+- Within demos, aliased as `namespace fp128 = quad::cuda_fp128; namespace dd = quad::ddfun;`
 
 ### Platform Constraint
 

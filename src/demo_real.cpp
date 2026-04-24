@@ -1,5 +1,7 @@
-// Kokkos CUDA FP128 extended-precision demo — real ops.
-// Demonstrates CUDA FP128 accuracy vs host quadmath.h reference.
+// Combined dual-backend real ops demo: CUDA Emulated FP128 + Kokkos DD.
+// Each operation is run on FP128, double-double (DD), and FP64. The table
+// shows slowdown vs FP64 (min/max/med/mean across repeats) and accuracy
+// in decimal digits for FP128 and DD side by side.
 
 #include <Kokkos_Core.hpp>
 
@@ -8,11 +10,13 @@ extern "C" {
 }
 
 #include <NVIDIA_emulated_quad/quad_math.hpp>
+#include <dd_math.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -22,11 +26,17 @@ extern "C" {
 #include <string>
 #include <vector>
 
+namespace fp128 = quad::cuda_fp128;
+namespace dd    = quad::ddfun;
+
 namespace {
 
 constexpr int      kWarmupRuns     = 2;
 constexpr int      kDefaultRepeats = 5;
 constexpr uint64_t kDefaultSeed    = 12345ULL;
+
+constexpr double kMaxDigits_fp128 = 33.0;
+constexpr double kMaxDigits_dd    = 31.0;
 
 // clang-format off
 enum class Op {
@@ -320,54 +330,83 @@ TimeStats time_kernel_fence(int repeats, Launch&& launch) {
 
 // ---- Accuracy --------------------------------------------------------------
 
-struct AccStats { double min_d = 33, max_d = 0, mean_d = 0, median_d = 0; };
+struct AccStats { double min_d = 0, max_d = 0, mean_d = 0, median_d = 0; };
 
-static double element_digits(__float128 dev, __float128 ref) {
+static double element_digits(__float128 dev, __float128 ref, double max_digits) {
   if (isnanq(dev) || isnanq(ref)) return 0.0;
-  if (isinfq(ref)) return (isinfq(dev) && (dev>0)==(ref>0)) ? 33.0 : 0.0;
-  if (ref == (__float128)0.0) return (dev == (__float128)0.0) ? 33.0 : 0.0;
+  if (isinfq(ref)) return (isinfq(dev) && (dev>0)==(ref>0)) ? max_digits : 0.0;
+  if (ref == (__float128)0.0) return (dev == (__float128)0.0) ? max_digits : 0.0;
   __float128 rel = fabsq((dev - ref) / ref);
-  if (rel == (__float128)0.0) return 33.0;
+  if (rel == (__float128)0.0) return max_digits;
   double d = -(double)log10q(rel);
-  return d < 0.0 ? 0.0 : (d > 33.0 ? 33.0 : d);
+  return d < 0.0 ? 0.0 : (d > max_digits ? max_digits : d);
 }
 
-AccStats compute_accuracy_dbl(const __float128* ref, const double* dev, int n) {
-  std::vector<double> digits((size_t)n);
+static __float128 dd_to_q(dd::ddouble x) {
+  return (__float128)x.hi + (__float128)x.lo;
+}
+
+AccStats compute_accuracy_fp128(const __float128* ref, const fp128::fp128_t* dev, int n) {
+  std::vector<double> digs((size_t)n);
   for (int i = 0; i < n; ++i)
-    digits[i] = element_digits((__float128)dev[i], ref[i]);
-  std::sort(digits.begin(), digits.end());
+    digs[i] = element_digits(static_cast<__float128>(dev[i].value), ref[i], kMaxDigits_fp128);
+  std::sort(digs.begin(), digs.end());
   AccStats s;
-  s.min_d  = digits.front();
-  s.max_d  = digits.back();
-  s.mean_d = std::accumulate(digits.begin(), digits.end(), 0.0) / (double)n;
-  size_t m = digits.size();
-  s.median_d = (m%2==1) ? digits[m/2] : 0.5*(digits[m/2-1]+digits[m/2]);
+  s.min_d    = digs.front();
+  s.max_d    = digs.back();
+  s.mean_d   = std::accumulate(digs.begin(), digs.end(), 0.0) / (double)n;
+  size_t m   = digs.size();
+  s.median_d = (m%2==1) ? digs[m/2] : 0.5*(digs[m/2-1]+digs[m/2]);
   return s;
 }
 
-AccStats compute_accuracy(const __float128* ref, const quad::cuda_fp128::fp128_t* dev, int n) {
-  std::vector<double> digits((size_t)n);
+AccStats compute_accuracy_dd(const __float128* ref, const dd::ddouble* dev, int n) {
+  std::vector<double> digs((size_t)n);
   for (int i = 0; i < n; ++i)
-    digits[i] = element_digits(static_cast<__float128>(dev[i].value), ref[i]);
-  std::sort(digits.begin(), digits.end());
+    digs[i] = element_digits(dd_to_q(dev[i]), ref[i], kMaxDigits_dd);
+  std::sort(digs.begin(), digs.end());
   AccStats s;
-  s.min_d  = digits.front();
-  s.max_d  = digits.back();
-  s.mean_d = std::accumulate(digits.begin(), digits.end(), 0.0) / (double)n;
-  size_t m = digits.size();
-  s.median_d = (m%2==1) ? digits[m/2] : 0.5*(digits[m/2-1]+digits[m/2]);
+  s.min_d    = digs.front();
+  s.max_d    = digs.back();
+  s.mean_d   = std::accumulate(digs.begin(), digs.end(), 0.0) / (double)n;
+  size_t m   = digs.size();
+  s.median_d = (m%2==1) ? digs[m/2] : 0.5*(digs[m/2-1]+digs[m/2]);
   return s;
 }
 
-// ---- Per-op runner ---------------------------------------------------------
+// ---- Slowdown stats --------------------------------------------------------
 
-struct OpResult { Op op; TimeStats fp128_timing, dbl_timing; AccStats fp128_acc, dbl_acc; };
+struct SlowdownStats { double min_x = 1, max_x = 1, median_x = 1, mean_x = 1; };
+
+static SlowdownStats compute_slowdown(const TimeStats& backend, const TimeStats& fp64) {
+  auto sdiv = [](double a, double b) { return b > 0.0 ? a/b : 1.0; };
+  return { sdiv(backend.min_s, fp64.min_s),
+           sdiv(backend.max_s, fp64.max_s),
+           sdiv(backend.median_s, fp64.median_s),
+           sdiv(backend.mean_s, fp64.mean_s) };
+}
+
+static std::string fmt_slow(double x) {
+  char buf[16];
+  std::snprintf(buf, sizeof(buf), "%.1fx", x);
+  return buf;
+}
+
+// ---- Per-op result ---------------------------------------------------------
+
+struct OpResult {
+  Op        op;
+  TimeStats fp128_timing, dd_timing, fp64_timing;
+  AccStats  fp128_acc, dd_acc;
+};
+
+// ---- View types ------------------------------------------------------------
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using v128       = Kokkos::View<quad::cuda_fp128::fp128_t*, Kokkos::LayoutRight, exec_space>;
-using vdbl       = Kokkos::View<double*,      Kokkos::LayoutRight, exec_space>;
+using v128       = Kokkos::View<fp128::fp128_t*, Kokkos::LayoutRight, exec_space>;
+using vdd_t      = Kokkos::View<dd::ddouble*,    Kokkos::LayoutRight, exec_space>;
+using vdbl       = Kokkos::View<double*,          Kokkos::LayoutRight, exec_space>;
 
 OpResult run_op(Op op, const Config& cfg) {
   const int n = cfg.batch;
@@ -378,25 +417,33 @@ OpResult run_op(Op op, const Config& cfg) {
   fill_inputs(op, ha.data(), hb.data(), hc.data(), n, cfg.seed);
   host_quadmath_reference(op, ha.data(), hb.data(), hc.data(), href.data(), n);
 
-  v128 a128("a128",n), b128("b128",n), c128("c128",n), r128("r128",n);
-  vdbl ad("ad",n), bd("bd",n), cd("cd",n), rd("rd",n);
+  v128   a128("a128",n), b128("b128",n), c128("c128",n), r128("r128",n);
+  vdd_t  add("add",n),   bdd("bdd",n),   cdd("cdd",n),   rdd("rdd",n);
+  vdbl   ad("ad",n),     bd("bd",n),     cd("cd",n),     rd("rd",n);
+
   {
     auto ma=Kokkos::create_mirror_view(a128), mb=Kokkos::create_mirror_view(b128);
     auto mc=Kokkos::create_mirror_view(c128);
+    auto madd=Kokkos::create_mirror_view(add), mbdd=Kokkos::create_mirror_view(bdd);
+    auto mcdd=Kokkos::create_mirror_view(cdd);
     auto mad=Kokkos::create_mirror_view(ad), mbd=Kokkos::create_mirror_view(bd);
     auto mcd=Kokkos::create_mirror_view(cd);
     for (int i=0; i<n; ++i) {
-      ma(i)=quad::cuda_fp128::fp128_t((__float128)ha[i]); mb(i)=quad::cuda_fp128::fp128_t((__float128)hb[i]);
-      mc(i)=quad::cuda_fp128::fp128_t((__float128)hc[i]);
-      mad(i)=ha[i]; mbd(i)=hb[i]; mcd(i)=hc[i];
+      ma(i)   = fp128::fp128_t((__float128)ha[i]);
+      mb(i)   = fp128::fp128_t((__float128)hb[i]);
+      mc(i)   = fp128::fp128_t((__float128)hc[i]);
+      madd(i) = dd::ddouble(ha[i]);
+      mbdd(i) = dd::ddouble(hb[i]);
+      mcdd(i) = dd::ddouble(hc[i]);
+      mad(i)  = ha[i]; mbd(i) = hb[i]; mcd(i) = hc[i];
     }
-    Kokkos::deep_copy(a128,ma); Kokkos::deep_copy(b128,mb);
-    Kokkos::deep_copy(c128,mc);
+    Kokkos::deep_copy(a128,ma); Kokkos::deep_copy(b128,mb); Kokkos::deep_copy(c128,mc);
+    Kokkos::deep_copy(add,madd); Kokkos::deep_copy(bdd,mbdd); Kokkos::deep_copy(cdd,mcdd);
     Kokkos::deep_copy(ad,mad); Kokkos::deep_copy(bd,mbd); Kokkos::deep_copy(cd,mcd);
   }
 
   policy_1d pol(0, n);
-  TimeStats st_fp128, st_dbl;
+  TimeStats st_fp128, st_dd, st_dbl;
 
   // ---- FP128 kernels ---------------------------------------------------------
   switch (op) {
@@ -409,78 +456,160 @@ OpResult run_op(Op op, const Config& cfg) {
     case Op::Div:
       st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_div",pol,KOKKOS_LAMBDA(int i){r128(i)=a128(i)/b128(i);});}); break;
     case Op::Sqrt:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sqrt",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::sqrt(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sqrt",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::sqrt(a128(i));});}); break;
     case Op::Abs:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_abs",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::abs(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_abs",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::abs(a128(i));});}); break;
     case Op::Exp:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::exp(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::exp(a128(i));});}); break;
     case Op::Log:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::log(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::log(a128(i));});}); break;
     case Op::Exp2:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp2",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::exp2(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp2",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::exp2(a128(i));});}); break;
     case Op::Exp10:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp10",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::exp10(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_exp10",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::exp10(a128(i));});}); break;
     case Op::Expm1:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_expm1",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::expm1(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_expm1",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::expm1(a128(i));});}); break;
     case Op::Log2:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log2",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::log2(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log2",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::log2(a128(i));});}); break;
     case Op::Log10:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log10",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::log10(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log10",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::log10(a128(i));});}); break;
     case Op::Log1p:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log1p",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::log1p(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_log1p",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::log1p(a128(i));});}); break;
     case Op::Sin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sin",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::sin(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sin",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::sin(a128(i));});}); break;
     case Op::Cos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cos",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::cos(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cos",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::cos(a128(i));});}); break;
     case Op::Tan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_tan",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::tan(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_tan",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::tan(a128(i));});}); break;
     case Op::Asin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_asin",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::asin(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_asin",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::asin(a128(i));});}); break;
     case Op::Acos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_acos",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::acos(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_acos",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::acos(a128(i));});}); break;
     case Op::Atan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_atan",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::atan(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_atan",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::atan(a128(i));});}); break;
     case Op::Sinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sinh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::sinh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_sinh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::sinh(a128(i));});}); break;
     case Op::Cosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cosh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::cosh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cosh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::cosh(a128(i));});}); break;
     case Op::Tanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_tanh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::tanh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_tanh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::tanh(a128(i));});}); break;
     case Op::Acosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_acosh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::acosh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_acosh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::acosh(a128(i));});}); break;
     case Op::Asinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_asinh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::asinh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_asinh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::asinh(a128(i));});}); break;
     case Op::Atanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_atanh",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::atanh(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_atanh",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::atanh(a128(i));});}); break;
     case Op::Pow:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_pow",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::pow(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_pow",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::pow(a128(i),b128(i));});}); break;
     case Op::Hypot:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_hypot",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::hypot(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_hypot",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::hypot(a128(i),b128(i));});}); break;
     case Op::Fmod:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmod",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::fmod(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmod",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::fmod(a128(i),b128(i));});}); break;
     case Op::Remainder:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_rem",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::remainder(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_rem",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::remainder(a128(i),b128(i));});}); break;
     case Op::Copysign:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cs",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::copysign(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_cs",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::copysign(a128(i),b128(i));});}); break;
     case Op::Fmax:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmax",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::fmax(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmax",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::fmax(a128(i),b128(i));});}); break;
     case Op::Fmin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmin",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::fmin(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fmin",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::fmin(a128(i),b128(i));});}); break;
     case Op::Fdim:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fdim",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::fdim(a128(i),b128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fdim",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::fdim(a128(i),b128(i));});}); break;
     case Op::Fma:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fma",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::fma(a128(i),b128(i),c128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_fma",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::fma(a128(i),b128(i),c128(i));});}); break;
     case Op::Ceil:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_ceil",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::ceil(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_ceil",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::ceil(a128(i));});}); break;
     case Op::Floor:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_floor",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::floor(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_floor",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::floor(a128(i));});}); break;
     case Op::Round:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_round",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::round(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_round",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::round(a128(i));});}); break;
     case Op::Trunc:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_trunc",pol,KOKKOS_LAMBDA(int i){r128(i)=quad::cuda_fp128::trunc(a128(i));});}); break;
+      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fp128_trunc",pol,KOKKOS_LAMBDA(int i){r128(i)=fp128::trunc(a128(i));});}); break;
   }
 
-  // ---- Double kernels --------------------------------------------------------
+  // ---- DD kernels ------------------------------------------------------------
+  switch (op) {
+    case Op::Add:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_add",pol,KOKKOS_LAMBDA(int i){rdd(i)=add(i)+bdd(i);});}); break;
+    case Op::Sub:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_sub",pol,KOKKOS_LAMBDA(int i){rdd(i)=add(i)-bdd(i);});}); break;
+    case Op::Mul:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_mul",pol,KOKKOS_LAMBDA(int i){rdd(i)=add(i)*bdd(i);});}); break;
+    case Op::Div:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_div",pol,KOKKOS_LAMBDA(int i){rdd(i)=add(i)/bdd(i);});}); break;
+    case Op::Sqrt:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_sqrt",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::sqrt(add(i));});}); break;
+    case Op::Abs:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_abs",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::abs(add(i));});}); break;
+    case Op::Exp:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_exp",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::exp(add(i));});}); break;
+    case Op::Log:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_log",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::log(add(i));});}); break;
+    case Op::Exp2:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_exp2",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::exp2(add(i));});}); break;
+    case Op::Exp10:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_exp10",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::exp10(add(i));});}); break;
+    case Op::Expm1:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_expm1",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::expm1(add(i));});}); break;
+    case Op::Log2:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_log2",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::log2(add(i));});}); break;
+    case Op::Log10:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_log10",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::log10(add(i));});}); break;
+    case Op::Log1p:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_log1p",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::log1p(add(i));});}); break;
+    case Op::Sin:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_sin",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::sin(add(i));});}); break;
+    case Op::Cos:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_cos",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::cos(add(i));});}); break;
+    case Op::Tan:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_tan",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::tan(add(i));});}); break;
+    case Op::Asin:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_asin",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::asin(add(i));});}); break;
+    case Op::Acos:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_acos",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::acos(add(i));});}); break;
+    case Op::Atan:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_atan",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::atan(add(i));});}); break;
+    case Op::Sinh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_sinh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::sinh(add(i));});}); break;
+    case Op::Cosh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_cosh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::cosh(add(i));});}); break;
+    case Op::Tanh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_tanh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::tanh(add(i));});}); break;
+    case Op::Acosh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_acosh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::acosh(add(i));});}); break;
+    case Op::Asinh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_asinh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::asinh(add(i));});}); break;
+    case Op::Atanh:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_atanh",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::atanh(add(i));});}); break;
+    case Op::Pow:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_pow",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::pow(add(i),bdd(i));});}); break;
+    case Op::Hypot:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_hypot",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::hypot(add(i),bdd(i));});}); break;
+    case Op::Fmod:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_fmod",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::fmod(add(i),bdd(i));});}); break;
+    case Op::Remainder:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_rem",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::remainder(add(i),bdd(i));});}); break;
+    case Op::Copysign:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_cs",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::copysign(add(i),bdd(i));});}); break;
+    case Op::Fmax:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_fmax",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::fmax(add(i),bdd(i));});}); break;
+    case Op::Fmin:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_fmin",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::fmin(add(i),bdd(i));});}); break;
+    case Op::Fdim:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_fdim",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::fdim(add(i),bdd(i));});}); break;
+    case Op::Fma:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_fma",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::fma(add(i),bdd(i),cdd(i));});}); break;
+    case Op::Ceil:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_ceil",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::ceil(add(i));});}); break;
+    case Op::Floor:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_floor",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::floor(add(i));});}); break;
+    case Op::Round:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_round",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::round(add(i));});}); break;
+    case Op::Trunc:
+      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dd_trunc",pol,KOKKOS_LAMBDA(int i){rdd(i)=dd::trunc(add(i));});}); break;
+  }
+
+  // ---- FP64 kernels (timing baseline only) -----------------------------------
   switch (op) {
     case Op::Add:
       st_dbl=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dbl_add",pol,KOKKOS_LAMBDA(int i){rd(i)=ad(i)+bd(i);});}); break;
@@ -562,27 +691,25 @@ OpResult run_op(Op op, const Config& cfg) {
       st_dbl=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dbl_trunc",pol,KOKKOS_LAMBDA(int i){rd(i)=Kokkos::trunc(ad(i));});}); break;
   }
 
-  auto mr = Kokkos::create_mirror_view(r128);
-  Kokkos::deep_copy(mr, r128);
-  auto mrd = Kokkos::create_mirror_view(rd);
-  Kokkos::deep_copy(mrd, rd);
+  auto mr128 = Kokkos::create_mirror_view(r128); Kokkos::deep_copy(mr128, r128);
+  auto mrdd  = Kokkos::create_mirror_view(rdd);  Kokkos::deep_copy(mrdd, rdd);
 
-  AccStats fp128_acc = compute_accuracy(href.data(), mr.data(), n);
-  AccStats dbl_acc   = compute_accuracy_dbl(href.data(), mrd.data(), n);
-  return {op, st_fp128, st_dbl, fp128_acc, dbl_acc};
+  AccStats fp128_acc = compute_accuracy_fp128(href.data(), mr128.data(), n);
+  AccStats dd_acc    = compute_accuracy_dd(href.data(), mrdd.data(), n);
+
+  return {op, st_fp128, st_dd, st_dbl, fp128_acc, dd_acc};
 }
 
 // ---- Table printing --------------------------------------------------------
-// Column widths (chars):  op=10  time=9 (ms, fixed 4dp)  acc=7 (digits, fixed 2dp)
+// Layout: op(10) | FP128: slow×4 acc×4 | DD: slow×4 acc×4 |
+// kSW=7 fits "100.0x" (6 chars) right-aligned; kAW=7 fits "31.00" right-aligned.
 
-static constexpr int kOpW = 10;
-static constexpr int kTW  =  9;
-static constexpr int kAW  =  7;
-
-// Section widths (4 sub-cols each, 3 inner pipes)
-static constexpr int kTimeSec = 4*kTW + 3;   // 39
+static constexpr int kOpW     = 10;
+static constexpr int kSW      =  7;
+static constexpr int kAW      =  7;
+static constexpr int kSlowSec = 4*kSW + 3;   // 31
 static constexpr int kAccSec  = 4*kAW + 3;   // 31
-static constexpr int kBkndW   = kTimeSec + 1 + kAccSec; // 71
+static constexpr int kBkndW   = kSlowSec + 1 + kAccSec; // 63
 
 static std::string dashes(int n) { return std::string((size_t)n, '-'); }
 
@@ -594,62 +721,60 @@ static std::string center(const std::string& s, int w) {
 
 static void print_sep_real() {
   std::cout << '-' << dashes(kOpW) << "-+"
-            << dashes(kTimeSec) << "+" << dashes(kAccSec) << "+"
-            << dashes(kTimeSec) << "+" << dashes(kAccSec) << "+\n";
+            << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+"
+            << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+\n";
 }
 
 static void print_header_real() {
   using std::cout;
-  // Line 1: backend titles
   cout << ' ' << std::string(kOpW,' ')
        << " |" << center("CUDA Emulated FP128", kBkndW)
-       << "|" << center("CUDA FP64", kBkndW) << "|\n";
-  // Line 2: section titles
+       << "|" << center("Kokkos DD (double-double)", kBkndW) << "|\n";
   cout << ' ' << std::string(kOpW,' ')
-       << " |" << center("Time (ms)", kTimeSec) << "|" << center("Accuracy (digits)", kAccSec)
-       << "|" << center("Time (ms)", kTimeSec) << "|" << center("Accuracy (digits)", kAccSec) << "|\n";
-  // Line 3: separator
+       << " |" << center("Slowdown vs FP64", kSlowSec)
+       << "|" << center("Accuracy (digits)", kAccSec)
+       << "|" << center("Slowdown vs FP64", kSlowSec)
+       << "|" << center("Accuracy (digits)", kAccSec) << "|\n";
   print_sep_real();
-  // Line 4: sub-column names
   cout << ' ' << std::left << std::setw(kOpW) << ""
-       << " |" << center("Min",kTW) << "|" << center("Max",kTW)
-       << "|" << center("Med",kTW)  << "|" << center("Mean",kTW)
+       << " |" << center("Min",kSW) << "|" << center("Max",kSW)
+       << "|" << center("Med",kSW)  << "|" << center("Mean",kSW)
        << "|" << center("Min",kAW)  << "|" << center("Max",kAW)
        << "|" << center("Med",kAW)  << "|" << center("Mean",kAW)
-       << "|" << center("Min",kTW)  << "|" << center("Max",kTW)
-       << "|" << center("Med",kTW)  << "|" << center("Mean",kTW)
+       << "|" << center("Min",kSW)  << "|" << center("Max",kSW)
+       << "|" << center("Med",kSW)  << "|" << center("Mean",kSW)
        << "|" << center("Min",kAW)  << "|" << center("Max",kAW)
        << "|" << center("Med",kAW)  << "|" << center("Mean",kAW) << "|\n";
-  // Line 5: heavy separator
   cout << '=' << dashes(kOpW) << "=+"
-       << dashes(kTimeSec) << "+" << dashes(kAccSec) << "+"
-       << dashes(kTimeSec) << "+" << dashes(kAccSec) << "+\n";
+       << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+"
+       << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+\n";
 }
 
 static void print_row_real(const OpResult& r) {
   using std::cout; using std::setw; using std::right; using std::fixed; using std::setprecision;
-  auto T = [](double s) { return s * 1000.0; };
+  SlowdownStats sf = compute_slowdown(r.fp128_timing, r.fp64_timing);
+  SlowdownStats sd = compute_slowdown(r.dd_timing,    r.fp64_timing);
   cout << ' ' << std::left << std::setw(kOpW) << op_name(r.op) << " |"
-       << right << fixed << setprecision(4)
-       << setw(kTW) << T(r.fp128_timing.min_s)    << "|"
-       << setw(kTW) << T(r.fp128_timing.max_s)    << "|"
-       << setw(kTW) << T(r.fp128_timing.median_s) << "|"
-       << setw(kTW) << T(r.fp128_timing.mean_s)   << "|"
-       << setprecision(2)
+       << right
+       << setw(kSW) << fmt_slow(sf.min_x)    << "|"
+       << setw(kSW) << fmt_slow(sf.max_x)    << "|"
+       << setw(kSW) << fmt_slow(sf.median_x) << "|"
+       << setw(kSW) << fmt_slow(sf.mean_x)   << "|"
+       << fixed << setprecision(2)
        << setw(kAW) << r.fp128_acc.min_d    << "|"
        << setw(kAW) << r.fp128_acc.max_d    << "|"
        << setw(kAW) << r.fp128_acc.median_d << "|"
        << setw(kAW) << r.fp128_acc.mean_d   << "|"
-       << setprecision(4)
-       << setw(kTW) << T(r.dbl_timing.min_s)    << "|"
-       << setw(kTW) << T(r.dbl_timing.max_s)    << "|"
-       << setw(kTW) << T(r.dbl_timing.median_s) << "|"
-       << setw(kTW) << T(r.dbl_timing.mean_s)   << "|"
-       << setprecision(2)
-       << setw(kAW) << r.dbl_acc.min_d    << "|"
-       << setw(kAW) << r.dbl_acc.max_d    << "|"
-       << setw(kAW) << r.dbl_acc.median_d << "|"
-       << setw(kAW) << r.dbl_acc.mean_d   << "|\n";
+       << std::defaultfloat
+       << setw(kSW) << fmt_slow(sd.min_x)    << "|"
+       << setw(kSW) << fmt_slow(sd.max_x)    << "|"
+       << setw(kSW) << fmt_slow(sd.median_x) << "|"
+       << setw(kSW) << fmt_slow(sd.mean_x)   << "|"
+       << fixed << setprecision(2)
+       << setw(kAW) << r.dd_acc.min_d    << "|"
+       << setw(kAW) << r.dd_acc.max_d    << "|"
+       << setw(kAW) << r.dd_acc.median_d << "|"
+       << setw(kAW) << r.dd_acc.mean_d   << "|\n";
 }
 
 
@@ -657,8 +782,7 @@ static void print_row_real(const OpResult& r) {
 
 int main(int argc, char** argv) {
   Config cfg;
-  cfg.all_ops = true;  // default: run everything
-  // Check if --op is present
+  cfg.all_ops = true;
   for (int i = 1; i < argc; ++i)
     if (std::string(argv[i]) == "--op") { cfg.all_ops = false; break; }
 

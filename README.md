@@ -1,51 +1,80 @@
 # Kokkos extended-precision demo
 
-Demonstrates **CUDA FP128** extended-precision kernels built with **Kokkos**, comparing
-device results against host **`quadmath.h`** references to verify accuracy.
+Demonstrates two extended-precision backends running side by side inside Kokkos CUDA kernels:
+
+| Backend | Type | Precision | GPU requirement |
+|---|---|---|---|
+| **CUDA Emulated FP128** | `quad::cuda_fp128::fp128_t` | ~33 decimal digits | compute ≥ 10.0 (sm_100, Blackwell) |
+| **Kokkos DD (double-double)** | `quad::ddfun::ddouble` | ~30–31 decimal digits | any CUDA-capable GPU |
+
+Each operation is run on both backends and on FP64. The output table shows **slowdown vs FP64** (min / max / median / mean across N timed repeats) and **accuracy in decimal digits** for FP128 and DD side by side.
+
+## Branch structure
+
+| Branch | Backend(s) | GPU requirement |
+|---|---|---|
+| `main` | CUDA Emulated FP128 + Kokkos DD | compute ≥ 10.0 (sm_100) |
+| `CUDAFP128Kokkos` | CUDA Emulated FP128 only | compute ≥ 10.0 (sm_100) |
+| `ddfunKokkos` | Kokkos DD (double-double) only | any CUDA-capable GPU |
 
 ## Executables
 
 ### `kokkos_ep_demo` — real ops
-Benchmarks all available CUDA FP128 real math operations (`__nv_fp128_*`) and reports:
-- **Timing**: kernel + `Kokkos::fence` (seconds), min / median / mean over N timed repeats
-- **Accuracy**: number of precise decimal digits vs `quadmath.h` reference, min / max / mean / median over the batch (max = 33)
+Runs all 39 real math operations on FP128, DD, and FP64. Reports:
+- **Slowdown vs FP64**: ratio of backend time to FP64 time, min / max / median / mean
+- **Accuracy**: decimal digits of precision vs `quadmath.h` reference (max 33.0 for FP128, 31.0 for DD)
 
 ### `kokkos_ep_demo_complex` — complex ops
-Benchmarks **`quad_complex`** (FP128) and **`Kokkos::complex<double>`** against the
-`__complex128` quadmath reference. Reports timing and accuracy (precise digits) for the
-**real** and **imaginary** parts in a single table, with two rows per operation.
+Runs all 24 complex math operations on FP128, DD, and FP64. Each op prints two rows (real part, imag part); slowdown is shown only on the first row.
 
 ## Dependencies
 
-- Kokkos (≥ 5.1) with CUDA backend (Blackwell, sm_100)
-- `quadmath.h` / libquadmath (host reference)
-- CUDA FP128 (`__nv_fp128_*`, requires compute capability ≥ 10.0)
+- Kokkos ≥ 5.1 with CUDA backend
+- CUDA 12.x+, GCC 13.x+
+- **Compute capability ≥ 10.0** (sm_100) required for `main` and `CUDAFP128Kokkos` branches (CUDA Emulated FP128)
+- `quadmath.h` / libquadmath (x86_64 only — host reference for accuracy measurement)
 
 ## Build
 
 ```bash
+source scripts/prepare.sh          # load modules (Argonne systems)
 source scripts/build_with_kokkos.sh <install-dir>
 ```
+
+Or, if Kokkos is already installed:
+
+```bash
+cmake -B build -DCMAKE_PREFIX_PATH=<kokkos-install-dir>
+cmake --build build -j$(nproc)
+```
+
+This outputs `build/kokkos_ep_demo` and `build/kokkos_ep_demo_complex`.
 
 ## Usage
 
 ```bash
-# Real ops demo
+# All real ops — FP128 and DD side by side vs FP64 baseline
+./build/kokkos_ep_demo --batch 500000 --repeats 5
+
+# Single real operation
 ./build/kokkos_ep_demo --op sin --batch 1000000 --repeats 5
 
-# Complex ops demo
+# All complex ops
+./build/kokkos_ep_demo_complex --batch 500000 --repeats 5
+
+# Single complex operation
 ./build/kokkos_ep_demo_complex --op exp --batch 1000000 --repeats 5
 
-# Run all real ops
+# Convenience scripts
 ./scripts/run_all_ops.sh --batch 500000
-
-# Run all complex ops
 ./scripts/run_all_complex_ops.sh --batch 500000
 ```
 
+Arguments: `--op <name>`, `--batch N` (default: 1,000,000), `--repeats N` (default: 5), `--seed N` (default: 12345).
+
 ## Supported operations
 
-### Real (`kokkos_ep_demo`)
+### Real (`kokkos_ep_demo`) — 39 ops, both backends
 | Category | Operations |
 |---|---|
 | Arithmetic | `add sub mul div` |
@@ -56,7 +85,7 @@ source scripts/build_with_kokkos.sh <install-dir>
 | 3-input | `fma` |
 | Rounding | `ceil floor round trunc` |
 
-### Complex (`kokkos_ep_demo_complex`)
+### Complex (`kokkos_ep_demo_complex`) — 24 ops, both backends
 | Category | Operations |
 |---|---|
 | Arithmetic | `add sub mul div` |

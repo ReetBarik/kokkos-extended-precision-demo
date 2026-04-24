@@ -57,3 +57,4 @@ target_include_directories(kokkos_ep_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE}
 target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
 
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex RUNTIME DESTINATION bin)
+
