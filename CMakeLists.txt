@@ -48,12 +48,12 @@ endif()
 
 set(THIRD_PARTY_INCLUDE "${CMAKE_SOURCE_DIR}/third_party/include")
 
-add_executable(kokkos_ep_demo src/demo_real.cpp)
-target_include_directories(kokkos_ep_demo PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_ep_demo PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+add_executable(kokkos_dd_demo src/demo_dd_real.cpp)
+target_include_directories(kokkos_dd_demo PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_dd_demo PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
 
-add_executable(kokkos_ep_demo_complex src/demo_complex.cpp)
-target_include_directories(kokkos_ep_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+add_executable(kokkos_dd_demo_complex src/demo_dd_complex.cpp)
+target_include_directories(kokkos_dd_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_dd_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
 
-install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex RUNTIME DESTINATION bin)
+install(TARGETS kokkos_dd_demo kokkos_dd_demo_complex RUNTIME DESTINATION bin)
