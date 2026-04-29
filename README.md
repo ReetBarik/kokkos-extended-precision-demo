@@ -1,5 +1,13 @@
 # Kokkos extended-precision demo
 
+Many scientific and engineering applications — from numerical linear algebra to particle physics simulations — require arithmetic precision beyond what standard 64-bit IEEE double (FP64, ~16 decimal digits) can provide. Historically, teams needing higher precision on CPUs have reached for GCC's quadmath / libquadmath library, which provides software-emulated IEEE 128-bit quad precision (~33 digits) through the `__float128` type. On GPUs, however, quad precision has long been unavailable: CUDA device code had no equivalent, forcing developers to use workarounds or keep high-precision work on the host.
+
+Two developments are changing this. First, NVIDIA introduced emulated FP128 device math functions in CUDA 12.8, requiring compute capability ≥ 10.0 (sm_100, Blackwell architecture), finally bringing `__float128`-class arithmetic into GPU kernels. Second, the alternative double-double (DD) approach — representing a value as an unevaluated sum of two FP64 numbers to achieve ~30–31 digits of precision — has a long history in portable high-precision software, most notably in David H. Bailey's DDFUN library, originally written in Fortran 90 as a quad-precision substitute for systems lacking hardware 128-bit support. The DD algorithms in DDFUN have now been ported to Kokkos, making them available across any CUDA-capable GPU regardless of compute capability.
+
+This repository benchmarks both approaches side by side within Kokkos CUDA kernels: CUDA Emulated FP128 (where Blackwell hardware is available) and Kokkos DD (portable to any GPU), measuring performance overhead relative to FP64 and verifying accuracy against quadmath reference values. The longer-term goal is to contribute these extended-precision backends into the Kokkos library ecosystem, making portable high-precision GPU computing available to the broader HPC community.
+
+---
+
 Demonstrates two extended-precision backends running side by side inside Kokkos CUDA kernels:
 
 | Backend | Type | Precision | GPU requirement |
