@@ -2,18 +2,18 @@
 
 Many scientific and engineering applications — from numerical linear algebra to particle physics simulations — require arithmetic precision beyond what standard 64-bit IEEE double (FP64, ~16 decimal digits) can provide. Historically, teams needing higher precision on CPUs have reached for GCC's quadmath / libquadmath library, which provides software-emulated IEEE 128-bit quad precision (~33 digits) through the `__float128` type. On GPUs, however, quad precision has long been unavailable: CUDA device code had no equivalent, forcing developers to use workarounds or keep high-precision work on the host.
 
-Two developments are changing this. First, NVIDIA introduced emulated FP128 device math functions in CUDA 12.8, requiring compute capability ≥ 10.0 (sm_100, Blackwell architecture), finally bringing `__float128`-class arithmetic into GPU kernels. Second, the alternative double-double (DD) approach — representing a value as an unevaluated sum of two FP64 numbers to achieve ~30–31 digits of precision — has a long history in portable high-precision software, most notably in David H. Bailey's DDFUN library, originally written in Fortran 90 as a quad-precision substitute for systems lacking hardware 128-bit support. The DD algorithms in DDFUN have now been ported to Kokkos, making them available across any CUDA-capable GPU regardless of compute capability.
+Two developments are changing this. First, NVIDIA introduced emulated FP128 device math functions in CUDA 12.8, requiring compute capability ≥ 10.0 (sm_100, Blackwell architecture), finally bringing `__float128`-class arithmetic into GPU kernels. Second, the alternative double-double (DD) approach — representing a value as an unevaluated sum of two FP64 numbers to achieve ~30–31 digits of precision — has a long history in portable high-precision software, most notably in David H. Bailey's DDFUN library, originally written in Fortran 90 as a quad-precision substitute for systems lacking hardware 128-bit support. The DD algorithms in DDFUN have now been ported to Kokkos, making them available on any platform Kokkos supports — CPU, GPU, or otherwise — with no dependency beyond Kokkos itself.
 
-This repository benchmarks both approaches side by side within Kokkos CUDA kernels: CUDA Emulated FP128 (where Blackwell hardware is available) and Kokkos DD (portable to any GPU), measuring performance overhead relative to FP64 and verifying accuracy against quadmath reference values. The longer-term goal is to contribute these extended-precision backends into the Kokkos library ecosystem, making portable high-precision GPU computing available to the broader HPC community.
+This repository benchmarks both approaches side by side within Kokkos kernels: CUDA Emulated FP128 (where Blackwell hardware is available) and Kokkos DD (portable to any Kokkos execution space), measuring performance overhead relative to FP64 and verifying accuracy against quadmath reference values. The longer-term goal is to contribute these extended-precision backends into the Kokkos library ecosystem, making portable high-precision GPU computing available to the broader HPC community.
 
 ---
 
-Demonstrates two extended-precision backends running side by side inside Kokkos CUDA kernels:
+Demonstrates two extended-precision backends running side by side inside Kokkos kernels:
 
-| Backend | Type | Precision | GPU requirement |
+| Backend | Type | Precision | Requirement |
 |---|---|---|---|
 | **CUDA Emulated FP128** | `quad::cuda_fp128::fp128_t` | ~33 decimal digits | compute ≥ 10.0 (sm_100, Blackwell) |
-| **Kokkos DD (double-double)** | `quad::ddfun::ddouble` | ~30–31 decimal digits | any CUDA-capable GPU |
+| **Kokkos DD (double-double)** | `quad::ddfun::ddouble` | ~30–31 decimal digits | Kokkos only — any execution space |
 
 Each operation is run on both backends and on FP64. The output table shows **slowdown vs FP64** (min / max / median / mean across N timed repeats) and **accuracy in decimal digits** for FP128 and DD side by side.
 
@@ -23,7 +23,7 @@ Each operation is run on both backends and on FP64. The output table shows **slo
 |---|---|---|
 | `main` | CUDA Emulated FP128 + Kokkos DD | compute ≥ 10.0 (sm_100) |
 | `CUDAFP128Kokkos` | CUDA Emulated FP128 only | compute ≥ 10.0 (sm_100) |
-| `ddfunKokkos` | Kokkos DD (double-double) only | any CUDA-capable GPU |
+| `ddfunKokkos` | Kokkos DD (double-double) only | Kokkos only — any execution space |
 
 ## Executables
 
@@ -37,10 +37,10 @@ Runs all 24 complex math operations on FP128, DD, and FP64. Each op prints two r
 
 ## Dependencies
 
-- Kokkos ≥ 5.1 with CUDA backend
-- CUDA 12.x+, GCC 13.x+
+- Kokkos ≥ 5.1
+- CUDA 12.x+ and GCC 13.x+ (required only for `main` and `CUDAFP128Kokkos` branches)
 - **Compute capability ≥ 10.0** (sm_100) required for `main` and `CUDAFP128Kokkos` branches (CUDA Emulated FP128)
-- `quadmath.h` / libquadmath (x86_64 only — host reference for accuracy measurement)
+- `quadmath.h` / libquadmath (x86_64 only — host reference for accuracy measurement; required by all branches in this repo)
 
 ## Build
 
