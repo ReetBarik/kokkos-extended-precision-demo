@@ -1,7 +1,15 @@
 /build/
 /build_logs/
 /kokkos/
+/setup.sh
 *.cobaltlog
 *.error
 *.output
+
+# Plan files are local working notes (one per branch); do not commit.
+PLAN_*.md
+
+# Standalone host tools compiled by g++ directly into scripts/ (not via cmake).
+scripts/gen_ff_constants
+scripts/test_ffmul
 

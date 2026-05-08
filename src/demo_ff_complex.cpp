@@ -1,43 +1,43 @@
-// Kokkos double-double demo — complex ops.
-// Benchmarks quad::ddfun::ddcomplex against host __complex128 quadmath reference.
+// Kokkos float-float demo — complex ops.
+// Benchmarks quad::ffun::ffcomplex against host __complex128 quadmath reference.
 //
 // ============================================================
-// quad::ddfun usage reference  (namespace dd = quad::ddfun)
+// quad::ffun usage reference  (namespace ff = quad::ffun)
 // ============================================================
 //
 // Construction
-//   dd::ddcomplex z;                  // zero
-//   dd::ddcomplex z(1.5);             // real from double
-//   dd::ddcomplex z(x);               // real from ddouble
-//   dd::ddcomplex z(1.0, 2.0);        // from two doubles (re, im)
-//   dd::ddcomplex z(x, y);            // from two ddoubles (re, im)
+//   ff::ffcomplex z;                  // zero
+//   ff::ffcomplex z(1.5f);            // real from float
+//   ff::ffcomplex z(x);               // real from ffloat
+//   ff::ffcomplex z(1.0f, 2.0f);      // from two floats (re, im)
+//   ff::ffcomplex z(x, y);            // from two ffloats (re, im)
 //
 // Arithmetic operators
-//   z + w,  z - w,  z * w,  z / w    // ddcomplex op ddcomplex -> ddcomplex
+//   z + w,  z - w,  z * w,  z / w    // ffcomplex op ffcomplex -> ffcomplex
 //   -z                                // unary negation
-//   z += w, z -= w, z *= w, z /= w   // ddcomplex op ddcomplex
+//   z += w, z -= w, z *= w, z /= w   // ffcomplex op ffcomplex
 //
 // Complex math functions  (all KOKKOS_INLINE_FUNCTION, host + device)
-//   dd::abs(z)                        // -> ddouble (modulus)
-//   dd::conj(z)                       // -> ddcomplex
-//   dd::sqrt(z)                       // -> ddcomplex
-//   dd::exp(z),   dd::log(z),   dd::log10(z)
-//   dd::sin(z),   dd::cos(z),   dd::tan(z)
-//   dd::asin(z),  dd::acos(z),  dd::atan(z)
-//   dd::sinh(z),  dd::cosh(z),  dd::tanh(z)
-//   dd::asinh(z), dd::acosh(z), dd::atanh(z)
-//   dd::pow(z, w)                     // ddcomplex exponent
-//   dd::polar(r, theta)               // r*exp(i*theta), r and theta are ddouble
+//   ff::abs(z)                        // -> ffloat (modulus)
+//   ff::conj(z)                       // -> ffcomplex
+//   ff::sqrt(z)                       // -> ffcomplex
+//   ff::exp(z),   ff::log(z),   ff::log10(z)
+//   ff::sin(z),   ff::cos(z),   ff::tan(z)
+//   ff::asin(z),  ff::acos(z),  ff::atan(z)
+//   ff::sinh(z),  ff::cosh(z),  ff::tanh(z)
+//   ff::asinh(z), ff::acosh(z), ff::atanh(z)
+//   ff::pow(z, w)                     // ffcomplex exponent
+//   ff::polar(r, theta)               // r*exp(i*theta), r and theta are ffloat
 //
-// Real math functions also available (see demo_dd_real.cpp)
+// Real math functions also available (see demo_ff_real.cpp)
 //
 // Constants
-//   dd::dd_pi()           // pi
-//   dd::dd_e()            // e
-//   dd::dd_log2()         // ln 2
-//   dd::dd_log10()        // ln 10
-//   dd::dd_sqrt2()        // sqrt(2)
-//   dd::dd_euler_gamma()  // Euler-Mascheroni gamma
+//   ff::ff_pi()           // pi
+//   ff::ff_e()            // e
+//   ff::ff_log2()         // ln 2
+//   ff::ff_log10()        // ln 10
+//   ff::ff_sqrt2()        // sqrt(2)
+//   ff::ff_euler_gamma()  // Euler-Mascheroni gamma
 // ============================================================
 
 #include <Kokkos_Core.hpp>
@@ -47,8 +47,8 @@ extern "C" {
 #include <quadmath.h>
 }
 
-#include <dd_math.hpp>
-#include <dd_complex.hpp>
+#include <ff_math.hpp>
+#include <ff_complex.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -68,7 +68,7 @@ namespace {
 constexpr int      kWarmupRuns     = 2;
 constexpr int      kDefaultRepeats = 5;
 constexpr uint64_t kDefaultSeed    = 12345ULL;
-constexpr double   kMaxDigits      = 31.0;
+constexpr double   kMaxDigits      = 14.0;
 
 // clang-format off
 enum class Op {
@@ -323,13 +323,13 @@ static double element_digits(__float128 dev, __float128 ref) {
   return d<0.0?0.0:(d>kMaxDigits?kMaxDigits:d);
 }
 
-static __float128 dd_to_q(quad::ddfun::ddouble x) {
+static __float128 ff_to_q(quad::ffun::ffloat x) {
   return (__float128)x.hi + (__float128)x.lo;
 }
 
-AccStats compute_acc_dd(const quad::ddfun::ddouble* dev, const __float128* ref, int n) {
+AccStats compute_acc_ff(const quad::ffun::ffloat* dev, const __float128* ref, int n) {
   std::vector<double> digs((size_t)n);
-  for (int i=0;i<n;++i) digs[i]=element_digits(dd_to_q(dev[i]),ref[i]);
+  for (int i=0;i<n;++i) digs[i]=element_digits(ff_to_q(dev[i]),ref[i]);
   std::sort(digs.begin(),digs.end());
   AccStats s;
   s.min_d=digs.front(); s.max_d=digs.back();
@@ -355,8 +355,8 @@ AccStats compute_acc_dbl(const double* dev, const __float128* ref, int n) {
 
 struct ComplexOpResult {
   Op        op;
-  TimeStats dd_timing, dbl_timing;
-  AccStats  dd_re, dd_im;
+  TimeStats ff_timing, dbl_timing;
+  AccStats  ff_re, ff_im;
   AccStats  dbl_re, dbl_im;
 };
 
@@ -364,11 +364,11 @@ struct ComplexOpResult {
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using vddc       = Kokkos::View<quad::ddfun::ddcomplex*, Kokkos::LayoutRight, exec_space>;
-using vdd        = Kokkos::View<quad::ddfun::ddouble*,   Kokkos::LayoutRight, exec_space>;
-using vdc        = Kokkos::View<Kokkos::complex<double>*, Kokkos::LayoutRight, exec_space>;
+using vffc       = Kokkos::View<quad::ffun::ffcomplex*,    Kokkos::LayoutRight, exec_space>;
+using vff        = Kokkos::View<quad::ffun::ffloat*,       Kokkos::LayoutRight, exec_space>;
+using vdc        = Kokkos::View<Kokkos::complex<double>*,  Kokkos::LayoutRight, exec_space>;
 
-namespace dd = quad::ddfun;
+namespace ff = quad::ffun;
 
 ComplexOpResult run_op(Op op, const Config& cfg) {
   const int n = cfg.batch;
@@ -380,21 +380,24 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   host_quadmath_reference(op, ha_re.data(),ha_im.data(), hb_re.data(),hb_im.data(),
                           href_re.data(), href_im.data(), n);
 
-  vddc qa("qa",n), qb("qb",n), qr("qr",n);
+  vffc qa("qa",n), qb("qb",n), qr("qr",n);
   vdc  da("da",n), db("db",n), dr("dr",n);
-  vdd  qra("qra",n), qrb("qrb",n);  // for polar: r and theta as ddouble
+  vff  qra("qra",n), qrb("qrb",n);  // for polar: r and theta as ffloat
 
   {
     auto mqa=Kokkos::create_mirror_view(qa), mqb=Kokkos::create_mirror_view(qb);
     auto mda=Kokkos::create_mirror_view(da), mdb=Kokkos::create_mirror_view(db);
     auto mqra=Kokkos::create_mirror_view(qra), mqrb=Kokkos::create_mirror_view(qrb);
     for (int i=0;i<n;++i) {
-      mqa(i)=dd::ddcomplex(dd::ddouble(ha_re[i]), dd::ddouble(ha_im[i]));
-      mqb(i)=dd::ddcomplex(dd::ddouble(hb_re[i]), dd::ddouble(hb_im[i]));
+      // Use ffloat(double) so the FF input faithfully encodes the FP64 value
+      // to ~14 digits (Route A split). Casting through (float) first would
+      // populate only hi and bound accuracy at ~7.2 digits.
+      mqa(i)=ff::ffcomplex(ff::ffloat(ha_re[i]), ff::ffloat(ha_im[i]));
+      mqb(i)=ff::ffcomplex(ff::ffloat(hb_re[i]), ff::ffloat(hb_im[i]));
       mda(i)=Kokkos::complex<double>(ha_re[i],ha_im[i]);
       mdb(i)=Kokkos::complex<double>(hb_re[i],hb_im[i]);
-      mqra(i)=dd::ddouble(ha_re[i]);   // polar r
-      mqrb(i)=dd::ddouble(ha_im[i]);   // polar theta
+      mqra(i)=ff::ffloat(ha_re[i]);   // polar r
+      mqrb(i)=ff::ffloat(ha_im[i]);   // polar theta
     }
     Kokkos::deep_copy(qa,mqa); Kokkos::deep_copy(qb,mqb);
     Kokkos::deep_copy(da,mda); Kokkos::deep_copy(db,mdb);
@@ -402,59 +405,59 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   }
 
   policy_1d pol(0,n);
-  TimeStats st_dd, st_dbl;
+  TimeStats st_ff, st_dbl;
 
-  // ---- DD kernels -------------------------------------------------------
+  // ---- FF kernels -------------------------------------------------------
   switch (op) {
     case Op::Add:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_add",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)+qb(i);});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_add",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)+qb(i);});}); break;
     case Op::Sub:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_sub",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)-qb(i);});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_sub",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)-qb(i);});}); break;
     case Op::Mul:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_mul",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)*qb(i);});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_mul",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)*qb(i);});}); break;
     case Op::Div:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_div",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)/qb(i);});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_div",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)/qb(i);});}); break;
     case Op::Abs:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_abs",pol,KOKKOS_LAMBDA(int i){
-        qr(i)=dd::ddcomplex(dd::abs(qa(i)), dd::ddouble(0.0));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_abs",pol,KOKKOS_LAMBDA(int i){
+        qr(i)=ff::ffcomplex(ff::abs(qa(i)), ff::ffloat(0.0f));});}); break;
     case Op::Conj:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_conj",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::conj(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_conj",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::conj(qa(i));});}); break;
     case Op::Sqrt:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_sqrt",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::sqrt(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_sqrt",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::sqrt(qa(i));});}); break;
     case Op::Exp:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_exp",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::exp(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_exp",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::exp(qa(i));});}); break;
     case Op::Log:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_log",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::log(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_log",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::log(qa(i));});}); break;
     case Op::Log10:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_log10",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::log10(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_log10",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::log10(qa(i));});}); break;
     case Op::Sin:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_sin",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::sin(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_sin",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::sin(qa(i));});}); break;
     case Op::Cos:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_cos",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::cos(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_cos",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::cos(qa(i));});}); break;
     case Op::Tan:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_tan",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::tan(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_tan",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::tan(qa(i));});}); break;
     case Op::Asin:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_asin",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::asin(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_asin",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::asin(qa(i));});}); break;
     case Op::Acos:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_acos",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::acos(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_acos",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::acos(qa(i));});}); break;
     case Op::Atan:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_atan",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::atan(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_atan",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::atan(qa(i));});}); break;
     case Op::Sinh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_sinh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::sinh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_sinh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::sinh(qa(i));});}); break;
     case Op::Cosh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_cosh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::cosh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_cosh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::cosh(qa(i));});}); break;
     case Op::Tanh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_tanh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::tanh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_tanh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::tanh(qa(i));});}); break;
     case Op::Asinh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_asinh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::asinh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_asinh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::asinh(qa(i));});}); break;
     case Op::Acosh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_acosh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::acosh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_acosh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::acosh(qa(i));});}); break;
     case Op::Atanh:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_atanh",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::atanh(qa(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_atanh",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::atanh(qa(i));});}); break;
     case Op::Pow:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_pow",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::pow(qa(i),qb(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_pow",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::pow(qa(i),qb(i));});}); break;
     case Op::Polar:
-      st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_polar",pol,KOKKOS_LAMBDA(int i){qr(i)=dd::polar(qra(i),qrb(i));});}); break;
+      st_ff=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("fc_polar",pol,KOKKOS_LAMBDA(int i){qr(i)=ff::polar(qra(i),qrb(i));});}); break;
   }
 
   // ---- double complex kernels ----------------------------------------------
@@ -516,16 +519,16 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   auto mqr=Kokkos::create_mirror_view(qr); Kokkos::deep_copy(mqr,qr);
   auto mdr=Kokkos::create_mirror_view(dr); Kokkos::deep_copy(mdr,dr);
 
-  std::vector<dd::ddouble> qr_re(n), qr_im(n);
-  std::vector<double>      dr_re(n), dr_im(n);
+  std::vector<ff::ffloat> qr_re(n), qr_im(n);
+  std::vector<double>     dr_re(n), dr_im(n);
   for (int i=0;i<n;++i) {
     qr_re[i]=mqr(i).re; qr_im[i]=mqr(i).im;
     dr_re[i]=mdr(i).real(); dr_im[i]=mdr(i).imag();
   }
 
-  return { op, st_dd, st_dbl,
-           compute_acc_dd(qr_re.data(), href_re.data(), n),
-           compute_acc_dd(qr_im.data(), href_im.data(), n),
+  return { op, st_ff, st_dbl,
+           compute_acc_ff(qr_re.data(), href_re.data(), n),
+           compute_acc_ff(qr_im.data(), href_im.data(), n),
            compute_acc_dbl(dr_re.data(), href_re.data(), n),
            compute_acc_dbl(dr_im.data(), href_im.data(), n) };
 }
@@ -603,9 +606,9 @@ static void print_inner_sep() {
 static void print_complex_op_rows(const ComplexOpResult& r) {
   std::string re_n = std::string(op_name(r.op)) + " (real)";
   std::string im_n = std::string(op_name(r.op)) + " (imag)";
-  print_row(re_n.c_str(), r.dd_timing, r.dd_re, r.dbl_timing, r.dbl_re);
+  print_row(re_n.c_str(), r.ff_timing, r.ff_re, r.dbl_timing, r.dbl_re);
   print_inner_sep();
-  print_row(im_n.c_str(), r.dd_timing, r.dd_im, r.dbl_timing, r.dbl_im);
+  print_row(im_n.c_str(), r.ff_timing, r.ff_im, r.dbl_timing, r.dbl_im);
   print_sep();
 }
 
@@ -624,7 +627,7 @@ int main(int argc, char** argv) {
     std::cout << "\nbatch=" << cfg.batch << "  repeats=" << cfg.repeats
               << "  seed=" << cfg.seed << "  warmup=" << kWarmupRuns
               << "  timing=kernel+fence\n\n";
-    print_header("Kokkos DD (double-double)", "CUDA FP64", "Accuracy (dig)");
+    print_header("Kokkos FF (float-float)", "CUDA FP64", "Accuracy (dig)");
     if (cfg.all_ops) {
       for (Op op : kAllOps) {
         print_complex_op_rows(run_op(op, cfg));

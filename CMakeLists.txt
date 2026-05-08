@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(kokkos-extended-precision-demo LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -48,12 +48,16 @@ endif()
 
 set(THIRD_PARTY_INCLUDE "${CMAKE_SOURCE_DIR}/third_party/include")
 
-add_executable(kokkos_dd_demo src/demo_dd_real.cpp)
-target_include_directories(kokkos_dd_demo PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_dd_demo PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+add_executable(kokkos_ff_demo src/demo_ff_real.cpp)
+target_include_directories(kokkos_ff_demo PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ff_demo PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
 
-add_executable(kokkos_dd_demo_complex src/demo_dd_complex.cpp)
-target_include_directories(kokkos_dd_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_dd_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+add_executable(kokkos_ff_demo_complex src/demo_ff_complex.cpp)
+target_include_directories(kokkos_ff_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ff_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
 
-install(TARGETS kokkos_dd_demo kokkos_dd_demo_complex RUNTIME DESTINATION bin)
+add_executable(probe_op scripts/probe_op.cpp)
+target_include_directories(probe_op PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(probe_op PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+
+install(TARGETS kokkos_ff_demo kokkos_ff_demo_complex RUNTIME DESTINATION bin)
