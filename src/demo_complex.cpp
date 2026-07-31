@@ -1,7 +1,7 @@
-// Combined dual-backend complex ops demo: CUDA Emulated FP128 + Kokkos DD.
-// Each operation is run on FP128, double-double (DD), and FP64. The table
-// shows two rows per op (real part, imag part accuracy); slowdown vs FP64
-// is printed only on the real row (same kernel time for re and im).
+// Kokkos DD (double-double) complex ops demo.
+// Each operation is run on double-double (DD) and FP64. The table shows two
+// rows per op (real part, imag part accuracy); slowdown vs FP64 is printed
+// only on the real row (same kernel time for re and im).
 
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Complex.hpp>
@@ -10,8 +10,6 @@ extern "C" {
 #include <quadmath.h>
 }
 
-#include <NVIDIA_emulated_quad/quad_math.hpp>
-#include <NVIDIA_emulated_quad/quad_complex.hpp>
 #include <dd_math.hpp>
 #include <dd_complex.hpp>
 
@@ -29,7 +27,6 @@ extern "C" {
 #include <string>
 #include <vector>
 
-namespace fp128 = quad::cuda_fp128;
 namespace dd    = quad::ddfun;
 
 namespace {
@@ -38,7 +35,6 @@ constexpr int      kWarmupRuns     = 2;
 constexpr int      kDefaultRepeats = 5;
 constexpr uint64_t kDefaultSeed    = 12345ULL;
 
-constexpr double kMaxDigits_fp128 = 33.0;
 constexpr double kMaxDigits_dd    = 31.0;
 
 // clang-format off
@@ -298,18 +294,6 @@ static __float128 dd_to_q(dd::ddouble x) {
   return (__float128)x.hi + (__float128)x.lo;
 }
 
-AccStats compute_acc_fp128(const fp128::fp128_t* dev, const __float128* ref, int n) {
-  std::vector<double> digs((size_t)n);
-  for (int i=0;i<n;++i) digs[i]=element_digits(static_cast<__float128>(dev[i].value),ref[i],kMaxDigits_fp128);
-  std::sort(digs.begin(),digs.end());
-  AccStats s;
-  s.min_d=digs.front(); s.max_d=digs.back();
-  s.mean_d=std::accumulate(digs.begin(),digs.end(),0.0)/(double)n;
-  size_t m=digs.size();
-  s.median_d=(m%2==1)?digs[m/2]:0.5*(digs[m/2-1]+digs[m/2]);
-  return s;
-}
-
 AccStats compute_acc_dd(const dd::ddouble* dev, const __float128* ref, int n) {
   std::vector<double> digs((size_t)n);
   for (int i=0;i<n;++i) digs[i]=element_digits(dd_to_q(dev[i]),ref[i],kMaxDigits_dd);
@@ -342,8 +326,7 @@ static std::string fmt_slow(double x) {
 
 struct ComplexOpResult {
   Op        op;
-  TimeStats fp128_timing, dd_timing, fp64_timing;
-  AccStats  fp128_re, fp128_im;
+  TimeStats dd_timing, fp64_timing;
   AccStats  dd_re,    dd_im;
 };
 
@@ -351,10 +334,8 @@ struct ComplexOpResult {
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using vqc        = Kokkos::View<fp128::quad_complex*,        Kokkos::LayoutRight, exec_space>;
 using vddc       = Kokkos::View<dd::ddcomplex*,              Kokkos::LayoutRight, exec_space>;
 using vdc        = Kokkos::View<Kokkos::complex<double>*,    Kokkos::LayoutRight, exec_space>;
-using v128       = Kokkos::View<fp128::fp128_t*,             Kokkos::LayoutRight, exec_space>;
 using vdd_t      = Kokkos::View<dd::ddouble*,                Kokkos::LayoutRight, exec_space>;
 
 ComplexOpResult run_op(Op op, const Config& cfg) {
@@ -367,91 +348,29 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   host_quadmath_reference(op, ha_re.data(),ha_im.data(), hb_re.data(),hb_im.data(),
                           href_re.data(), href_im.data(), n);
 
-  vqc  qa("qa",n), qb("qb",n), qr("qr",n);
   vddc dqa("dqa",n), dqb("dqb",n), dqr("dqr",n);
   vdc  da("da",n),  db("db",n),  dr("dr",n);
-  v128 qra("qra",n), qrb("qrb",n);   // for fp128 polar: r and theta
   vdd_t ddra("ddra",n), ddrb("ddrb",n); // for dd polar: r and theta
 
   {
-    auto mqa=Kokkos::create_mirror_view(qa),  mqb=Kokkos::create_mirror_view(qb);
     auto mdqa=Kokkos::create_mirror_view(dqa),mdqb=Kokkos::create_mirror_view(dqb);
     auto mda=Kokkos::create_mirror_view(da),  mdb=Kokkos::create_mirror_view(db);
-    auto mqra=Kokkos::create_mirror_view(qra),mqrb=Kokkos::create_mirror_view(qrb);
     auto mddra=Kokkos::create_mirror_view(ddra),mddrb=Kokkos::create_mirror_view(ddrb);
     for (int i=0;i<n;++i) {
-      mqa(i)=fp128::quad_complex(fp128::fp128_t((__float128)ha_re[i]),fp128::fp128_t((__float128)ha_im[i]));
-      mqb(i)=fp128::quad_complex(fp128::fp128_t((__float128)hb_re[i]),fp128::fp128_t((__float128)hb_im[i]));
       mdqa(i)=dd::ddcomplex(dd::ddouble(ha_re[i]),dd::ddouble(ha_im[i]));
       mdqb(i)=dd::ddcomplex(dd::ddouble(hb_re[i]),dd::ddouble(hb_im[i]));
       mda(i)=Kokkos::complex<double>(ha_re[i],ha_im[i]);
       mdb(i)=Kokkos::complex<double>(hb_re[i],hb_im[i]);
-      mqra(i)=fp128::fp128_t((__float128)ha_re[i]);
-      mqrb(i)=fp128::fp128_t((__float128)ha_im[i]);
       mddra(i)=dd::ddouble(ha_re[i]);
       mddrb(i)=dd::ddouble(ha_im[i]);
     }
-    Kokkos::deep_copy(qa,mqa);   Kokkos::deep_copy(qb,mqb);
     Kokkos::deep_copy(dqa,mdqa); Kokkos::deep_copy(dqb,mdqb);
     Kokkos::deep_copy(da,mda);   Kokkos::deep_copy(db,mdb);
-    Kokkos::deep_copy(qra,mqra); Kokkos::deep_copy(qrb,mqrb);
     Kokkos::deep_copy(ddra,mddra); Kokkos::deep_copy(ddrb,mddrb);
   }
 
   policy_1d pol(0,n);
-  TimeStats st_fp128, st_dd, st_dbl;
-
-  // ---- FP128 kernels -------------------------------------------------------
-  switch (op) {
-    case Op::Add:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_add",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)+qb(i);});}); break;
-    case Op::Sub:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sub",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)-qb(i);});}); break;
-    case Op::Mul:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_mul",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)*qb(i);});}); break;
-    case Op::Div:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_div",pol,KOKKOS_LAMBDA(int i){qr(i)=qa(i)/qb(i);});}); break;
-    case Op::Abs:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_abs",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::quad_complex(fp128::abs(qa(i)),fp128::fp128_t(0.0));});}); break;
-    case Op::Conj:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_conj",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::conj(qa(i));});}); break;
-    case Op::Sqrt:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sqrt",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::sqrt(qa(i));});}); break;
-    case Op::Exp:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_exp",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::exp(qa(i));});}); break;
-    case Op::Log:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::log(qa(i));});}); break;
-    case Op::Log10:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_log10",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::log10(qa(i));});}); break;
-    case Op::Sin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sin",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::sin(qa(i));});}); break;
-    case Op::Cos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cos",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::cos(qa(i));});}); break;
-    case Op::Tan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tan",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::tan(qa(i));});}); break;
-    case Op::Asin:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asin",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::asin(qa(i));});}); break;
-    case Op::Acos:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acos",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::acos(qa(i));});}); break;
-    case Op::Atan:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atan",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::atan(qa(i));});}); break;
-    case Op::Sinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_sinh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::sinh(qa(i));});}); break;
-    case Op::Cosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_cosh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::cosh(qa(i));});}); break;
-    case Op::Tanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_tanh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::tanh(qa(i));});}); break;
-    case Op::Asinh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_asinh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::asinh(qa(i));});}); break;
-    case Op::Acosh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_acosh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::acosh(qa(i));});}); break;
-    case Op::Atanh:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_atanh",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::atanh(qa(i));});}); break;
-    case Op::Pow:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_pow",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::pow(qa(i),qb(i));});}); break;
-    case Op::Polar:
-      st_fp128=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("qc_polar",pol,KOKKOS_LAMBDA(int i){qr(i)=fp128::polar(qra(i),qrb(i));});}); break;
-  }
+  TimeStats st_dd, st_dbl;
 
   // ---- DD kernels ----------------------------------------------------------
   switch (op) {
@@ -562,19 +481,14 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   }
 
   // ---- Download and compute accuracy ----------------------------------------
-  auto mqr=Kokkos::create_mirror_view(qr);   Kokkos::deep_copy(mqr,qr);
   auto mdqr=Kokkos::create_mirror_view(dqr); Kokkos::deep_copy(mdqr,dqr);
 
-  std::vector<fp128::fp128_t> fp128_re_v(n), fp128_im_v(n);
   std::vector<dd::ddouble>    dd_re_v(n),    dd_im_v(n);
   for (int i=0;i<n;++i) {
-    fp128_re_v[i]=mqr(i).re;   fp128_im_v[i]=mqr(i).im;
     dd_re_v[i]=mdqr(i).real(); dd_im_v[i]=mdqr(i).imag();
   }
 
-  return { op, st_fp128, st_dd, st_dbl,
-           compute_acc_fp128(fp128_re_v.data(), href_re.data(), n),
-           compute_acc_fp128(fp128_im_v.data(), href_im.data(), n),
+  return { op, st_dd, st_dbl,
            compute_acc_dd(dd_re_v.data(), href_re.data(), n),
            compute_acc_dd(dd_im_v.data(), href_im.data(), n) };
 }
@@ -600,59 +514,34 @@ static std::string center(const std::string& s, int w) {
 static void print_sep() {
   std::cout
     << '-' << dashes(kOpW) << "-+"
-    << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+"
     << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+\n";
 }
 
 static void print_header() {
   using std::cout;
   cout << ' ' << std::string(kOpW,' ') << " |"
-       << center("CUDA Emulated FP128", kBkndW) << "|"
        << center("Kokkos DD (double-double)", kBkndW) << "|\n";
   cout << ' ' << std::string(kOpW,' ') << " |"
-       << center("Slowdown vs FP64", kSlowSec) << "|" << center("Accuracy (digits)", kAccSec) << "|"
        << center("Slowdown vs FP64", kSlowSec) << "|" << center("Accuracy (digits)", kAccSec) << "|\n";
   print_sep();
   cout << ' ' << std::left << std::setw(kOpW) << "" << " |"
        << center("Min",kSW) << "|" << center("Max",kSW) << "|"
        << center("Med",kSW) << "|" << center("Mean",kSW) << "|"
        << center("Min",kAW) << "|" << center("Max",kAW) << "|"
-       << center("Med",kAW) << "|" << center("Mean",kAW) << "|"
-       << center("Min",kSW) << "|" << center("Max",kSW) << "|"
-       << center("Med",kSW) << "|" << center("Mean",kSW) << "|"
-       << center("Min",kAW) << "|" << center("Max",kAW) << "|"
        << center("Med",kAW) << "|" << center("Mean",kAW) << "|\n";
   cout << '=' << dashes(kOpW) << "=+"
-       << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+"
        << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+\n";
 }
 
 static void print_inner_sep() {
   std::cout << ' ' << std::string(kOpW,' ') << " +"
-            << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+"
             << dashes(kSlowSec) << "+" << dashes(kAccSec) << "+\n";
 }
 
 static void print_row(const char* name,
-                      const SlowdownStats* sf, const AccStats& af,
                       const SlowdownStats* sd, const AccStats& ad_acc) {
   using std::cout; using std::setw; using std::right; using std::fixed; using std::setprecision;
   cout << ' ' << std::left << std::setw(kOpW) << name << " |" << right;
-  if (sf) {
-    cout << setw(kSW) << fmt_slow(sf->min_x)    << "|"
-         << setw(kSW) << fmt_slow(sf->max_x)    << "|"
-         << setw(kSW) << fmt_slow(sf->median_x) << "|"
-         << setw(kSW) << fmt_slow(sf->mean_x)   << "|";
-  } else {
-    std::string blank(kSlowSec, ' ');
-    cout << blank << "|";
-  }
-  cout << fixed << setprecision(2)
-       << setw(kAW) << af.min_d    << "|"
-       << setw(kAW) << af.max_d    << "|"
-       << setw(kAW) << af.median_d << "|"
-       << setw(kAW) << af.mean_d   << "|"
-       << std::defaultfloat;
   if (sd) {
     cout << setw(kSW) << fmt_slow(sd->min_x)    << "|"
          << setw(kSW) << fmt_slow(sd->max_x)    << "|"
@@ -672,11 +561,10 @@ static void print_row(const char* name,
 static void print_complex_op_rows(const ComplexOpResult& r) {
   std::string re_name = std::string(op_name(r.op)) + " (real)";
   std::string im_name = std::string("  (imag)");
-  SlowdownStats sf = compute_slowdown(r.fp128_timing, r.fp64_timing);
   SlowdownStats sd = compute_slowdown(r.dd_timing,    r.fp64_timing);
-  print_row(re_name.c_str(), &sf, r.fp128_re, &sd, r.dd_re);
+  print_row(re_name.c_str(), &sd, r.dd_re);
   print_inner_sep();
-  print_row(im_name.c_str(), nullptr, r.fp128_im, nullptr, r.dd_im);
+  print_row(im_name.c_str(), nullptr, r.dd_im);
   print_sep();
 }
 

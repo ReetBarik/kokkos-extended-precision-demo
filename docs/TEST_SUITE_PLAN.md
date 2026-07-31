@@ -164,6 +164,22 @@ within a phase after the first task lands.
 
 ### Phase 0 — Foundation (2 tasks + 1 pre-task)
 
+**T0.-1: Extract FP128 to sibling branch; make `main` portable. (DONE)**
+
+- Executed 2026-07-31. FP128 code confirmed intact on `CUDAFP128Kokkos`
+  (headers byte-identical to `main`'s copies before removal).
+- Removed `third_party/include/NVIDIA_emulated_quad/` from `main`.
+- Stripped all FP128 device-backend paths from `src/demo_real.cpp` and
+  `src/demo_complex.cpp` (namespace alias, Views, kernels, accuracy
+  columns). Complex quadmath oracle calls (`cexpq`, `csqrtq`, …) left
+  intact — they are the reference, not the FP128 backend.
+- `main` now builds and runs DD-only on a Serial Kokkos (no CUDA
+  required). New Serial BEFORE baseline captured for the T0.0 diff.
+- Note: `scripts/build_with_kokkos.sh` still forces
+  `Kokkos_ENABLE_CUDA` + `Kokkos_ARCH_BLACKWELL100`; that is the
+  remaining CUDA coupling on `main` (not `CMakeLists.txt`), flagged as a
+  follow-up.
+
 **T0.0: Migrate quadmath oracle to Kokkos wrapper.**
 
 - Remove `find_library(QUADMATH_LIBRARY ...)` and the x86_64 gate from
