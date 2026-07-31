@@ -20,41 +20,30 @@ endif()
 
 find_package(Kokkos REQUIRED)
 
-if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
-  set(QUADMATH_NAMES libquadmath.so quadmath)
-  find_library(
-    QUADMATH_LIBRARY
-    NAMES ${QUADMATH_NAMES}
-    PATHS /usr/lib64/atlas
-          /usr/lib/atlas
-          /usr/lib64
-          /usr/lib
-          /usr/local/lib64
-          /usr/local/lib
-          /usr/x86_64-linux-gnu/*
-          /usr/lib/gcc/x86_64-linux-gnu/*
-          /usr/lib/gcc/x86_64-redhat-linux/*
-          /usr/lib/gcc/x86_64-pc-linux-gnu/*
-          /soft/compilers/gcc/x86_64-suse-linux/14.1.0/lib64
-          "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
-  if(QUADMATH_LIBRARY)
-    message(STATUS "Found QUADMATH: ${QUADMATH_LIBRARY}")
-  else()
-    message(FATAL_ERROR "libquadmath not found (required for host __float128 reference)")
-  endif()
+# The host __float128 oracle is provided by Kokkos's quadmath overloads
+# (impl/Kokkos_QuadPrecisionMath.hpp), which are compiled and linked when Kokkos
+# itself is built with Kokkos_ENABLE_LIBQUADMATH=ON. No separate find_library or
+# x86_64 gate is needed here — linking Kokkos::kokkos brings in libquadmath.
+# Kokkos exposes its enabled TPLs via the Kokkos_TPLS list (there is no
+# Kokkos_ENABLE_LIBQUADMATH variable for TPLs).
+if("LIBQUADMATH" IN_LIST Kokkos_TPLS)
+  message(STATUS "Kokkos built with LIBQUADMATH: host __float128 oracle enabled")
 else()
-  message(FATAL_ERROR "This demo currently expects x86_64 + libquadmath for host reference")
+  message(WARNING
+    "Kokkos was NOT built with Kokkos_ENABLE_LIBQUADMATH=ON; the host "
+    "__float128 oracle in the demos will not compile. Rebuild Kokkos with "
+    "-DKokkos_ENABLE_LIBQUADMATH=ON.")
 endif()
 
 set(THIRD_PARTY_INCLUDE "${CMAKE_SOURCE_DIR}/third_party/include")
 
 add_executable(kokkos_ep_demo src/demo_real.cpp)
 target_include_directories(kokkos_ep_demo PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_ep_demo PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+target_link_libraries(kokkos_ep_demo PRIVATE Kokkos::kokkos)
 
 add_executable(kokkos_ep_demo_complex src/demo_complex.cpp)
 target_include_directories(kokkos_ep_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
-target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos ${QUADMATH_LIBRARY})
+target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos)
 
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex RUNTIME DESTINATION bin)
 

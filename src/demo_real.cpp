@@ -5,9 +5,10 @@
 
 #include <Kokkos_Core.hpp>
 
-extern "C" {
-#include <quadmath.h>
-}
+// Host __float128 oracle via Kokkos's quadmath overloads (namespace Kokkos).
+// This header transitively includes <quadmath.h> when Kokkos was built with
+// Kokkos_ENABLE_LIBQUADMATH=ON, so ::*q symbols remain available too.
+#include <impl/Kokkos_QuadPrecisionMath.hpp>
 
 #include <dd_math.hpp>
 
@@ -255,41 +256,41 @@ void host_quadmath_reference(Op op, const double* ha, const double* hb, const do
       case Op::Sub:       out[i] = fa - fb;                      break;
       case Op::Mul:       out[i] = fa * fb;                      break;
       case Op::Div:       out[i] = fa / fb;                      break;
-      case Op::Sqrt:      out[i] = sqrtq(fa);                    break;
-      case Op::Abs:       out[i] = fabsq(fa);                    break;
-      case Op::Exp:       out[i] = expq(fa);                     break;
-      case Op::Log:       out[i] = logq(fa);                     break;
-      case Op::Exp2:      out[i] = exp2q(fa);                    break;
-      case Op::Exp10:     out[i] = powq((__float128)10.0, fa);   break;
-      case Op::Expm1:     out[i] = expm1q(fa);                   break;
-      case Op::Log2:      out[i] = log2q(fa);                    break;
-      case Op::Log10:     out[i] = log10q(fa);                   break;
-      case Op::Log1p:     out[i] = log1pq(fa);                   break;
-      case Op::Sin:       out[i] = sinq(fa);                     break;
-      case Op::Cos:       out[i] = cosq(fa);                     break;
-      case Op::Tan:       out[i] = tanq(fa);                     break;
-      case Op::Asin:      out[i] = asinq(fa);                    break;
-      case Op::Acos:      out[i] = acosq(fa);                    break;
-      case Op::Atan:      out[i] = atanq(fa);                    break;
-      case Op::Sinh:      out[i] = sinhq(fa);                    break;
-      case Op::Cosh:      out[i] = coshq(fa);                    break;
-      case Op::Tanh:      out[i] = tanhq(fa);                    break;
-      case Op::Acosh:     out[i] = acoshq(fa);                   break;
-      case Op::Asinh:     out[i] = asinhq(fa);                   break;
-      case Op::Atanh:     out[i] = atanhq(fa);                   break;
-      case Op::Pow:       out[i] = powq(fa, fb);                 break;
-      case Op::Hypot:     out[i] = hypotq(fa, fb);               break;
-      case Op::Fmod:      out[i] = fmodq(fa, fb);                break;
-      case Op::Remainder: out[i] = remainderq(fa, fb);           break;
-      case Op::Copysign:  out[i] = copysignq(fa, fb);            break;
-      case Op::Fmax:      out[i] = fmaxq(fa, fb);                break;
-      case Op::Fmin:      out[i] = fminq(fa, fb);                break;
-      case Op::Fdim:      out[i] = fdimq(fa, fb);                break;
-      case Op::Fma:       out[i] = fmaq(fa, fb, fc);             break;
-      case Op::Ceil:      out[i] = ceilq(fa);                    break;
-      case Op::Floor:     out[i] = floorq(fa);                   break;
-      case Op::Round:     out[i] = roundq(fa);                   break;
-      case Op::Trunc:     out[i] = truncq(fa);                   break;
+      case Op::Sqrt:      out[i] = Kokkos::sqrt(fa);             break;
+      case Op::Abs:       out[i] = Kokkos::abs(fa);              break;
+      case Op::Exp:       out[i] = Kokkos::exp(fa);              break;
+      case Op::Log:       out[i] = Kokkos::log(fa);              break;
+      case Op::Exp2:      out[i] = Kokkos::exp2(fa);             break;
+      case Op::Exp10:     out[i] = Kokkos::pow((__float128)10.0, fa); break;
+      case Op::Expm1:     out[i] = Kokkos::expm1(fa);            break;
+      case Op::Log2:      out[i] = Kokkos::log2(fa);             break;
+      case Op::Log10:     out[i] = Kokkos::log10(fa);            break;
+      case Op::Log1p:     out[i] = Kokkos::log1p(fa);            break;
+      case Op::Sin:       out[i] = Kokkos::sin(fa);              break;
+      case Op::Cos:       out[i] = Kokkos::cos(fa);              break;
+      case Op::Tan:       out[i] = Kokkos::tan(fa);              break;
+      case Op::Asin:      out[i] = Kokkos::asin(fa);             break;
+      case Op::Acos:      out[i] = Kokkos::acos(fa);             break;
+      case Op::Atan:      out[i] = Kokkos::atan(fa);             break;
+      case Op::Sinh:      out[i] = Kokkos::sinh(fa);             break;
+      case Op::Cosh:      out[i] = Kokkos::cosh(fa);             break;
+      case Op::Tanh:      out[i] = Kokkos::tanh(fa);             break;
+      case Op::Acosh:     out[i] = Kokkos::acosh(fa);            break;
+      case Op::Asinh:     out[i] = Kokkos::asinh(fa);            break;
+      case Op::Atanh:     out[i] = Kokkos::atanh(fa);            break;
+      case Op::Pow:       out[i] = Kokkos::pow(fa, fb);          break;
+      case Op::Hypot:     out[i] = Kokkos::hypot(fa, fb);        break;
+      case Op::Fmod:      out[i] = Kokkos::fmod(fa, fb);         break;
+      case Op::Remainder: out[i] = Kokkos::remainder(fa, fb);    break;
+      case Op::Copysign:  out[i] = Kokkos::copysign(fa, fb);     break;
+      case Op::Fmax:      out[i] = Kokkos::fmax(fa, fb);         break;
+      case Op::Fmin:      out[i] = Kokkos::fmin(fa, fb);         break;
+      case Op::Fdim:      out[i] = Kokkos::fdim(fa, fb);         break;
+      case Op::Fma:       out[i] = Kokkos::fma(fa, fb, fc);      break;
+      case Op::Ceil:      out[i] = Kokkos::ceil(fa);             break;
+      case Op::Floor:     out[i] = Kokkos::floor(fa);            break;
+      case Op::Round:     out[i] = Kokkos::round(fa);            break;
+      case Op::Trunc:     out[i] = Kokkos::trunc(fa);            break;
     }
   }
 }
@@ -330,12 +331,12 @@ TimeStats time_kernel_fence(int repeats, Launch&& launch) {
 struct AccStats { double min_d = 0, max_d = 0, mean_d = 0, median_d = 0; };
 
 static double element_digits(__float128 dev, __float128 ref, double max_digits) {
-  if (isnanq(dev) || isnanq(ref)) return 0.0;
-  if (isinfq(ref)) return (isinfq(dev) && (dev>0)==(ref>0)) ? max_digits : 0.0;
+  if (Kokkos::isnan(dev) || Kokkos::isnan(ref)) return 0.0;
+  if (Kokkos::isinf(ref)) return (Kokkos::isinf(dev) && (dev>0)==(ref>0)) ? max_digits : 0.0;
   if (ref == (__float128)0.0) return (dev == (__float128)0.0) ? max_digits : 0.0;
-  __float128 rel = fabsq((dev - ref) / ref);
+  __float128 rel = Kokkos::abs((dev - ref) / ref);
   if (rel == (__float128)0.0) return max_digits;
-  double d = -(double)log10q(rel);
+  double d = -(double)Kokkos::log10(rel);
   return d < 0.0 ? 0.0 : (d > max_digits ? max_digits : d);
 }
 

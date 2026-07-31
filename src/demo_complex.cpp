@@ -6,9 +6,11 @@
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Complex.hpp>
 
-extern "C" {
-#include <quadmath.h>
-}
+// Host __float128 oracle via Kokkos's quadmath overloads (namespace Kokkos).
+// This header transitively includes <quadmath.h> when Kokkos was built with
+// Kokkos_ENABLE_LIBQUADMATH=ON, which is also where the complex __complex128
+// oracle functions (cexpq, csqrtq, …) come from — they have no Kokkos wrapper.
+#include <impl/Kokkos_QuadPrecisionMath.hpp>
 
 #include <dd_math.hpp>
 #include <dd_complex.hpp>
@@ -240,7 +242,7 @@ void host_quadmath_reference(Op op,
       case Op::Pow:   res = cpowq(za,zb);  break;
       case Op::Polar: {
         __float128 r=(__float128)ha_re[i], th=(__float128)ha_im[i];
-        out_re[i]=r*cosq(th); out_im[i]=r*sinq(th); continue;
+        out_re[i]=r*Kokkos::cos(th); out_im[i]=r*Kokkos::sin(th); continue;
       }
     }
     out_re[i]=crealq(res); out_im[i]=cimagq(res);
@@ -281,12 +283,12 @@ TimeStats time_kernel_fence(int repeats, Launch&& launch) {
 struct AccStats { double min_d=0, max_d=0, mean_d=0, median_d=0; };
 
 static double element_digits(__float128 dev, __float128 ref, double max_digits) {
-  if (isnanq(dev)||isnanq(ref)) return 0.0;
-  if (isinfq(ref)) return (isinfq(dev)&&(dev>0)==(ref>0))?max_digits:0.0;
+  if (Kokkos::isnan(dev)||Kokkos::isnan(ref)) return 0.0;
+  if (Kokkos::isinf(ref)) return (Kokkos::isinf(dev)&&(dev>0)==(ref>0))?max_digits:0.0;
   if (ref==(__float128)0.0) return (dev==(__float128)0.0)?max_digits:0.0;
-  __float128 rel=fabsq((dev-ref)/ref);
+  __float128 rel=Kokkos::abs((dev-ref)/ref);
   if (rel==(__float128)0.0) return max_digits;
-  double d=-(double)log10q(rel);
+  double d=-(double)Kokkos::log10(rel);
   return d<0.0?0.0:(d>max_digits?max_digits:d);
 }
 
