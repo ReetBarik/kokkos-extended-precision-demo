@@ -419,7 +419,7 @@ NOTICE for dual-license posture. (DONE)**
 
 **T1.1: EFT unit tests for DD. (DONE)**
 
-- Executed 2026-08-01. Commit `T1.1_COMMIT_HASH`.
+- Executed 2026-08-01. Commit `30d8a40`.
 - **`tests/dd_eft_test.cpp` (new, ~470 lines).** Layer-1 EFT unit test for the
   two error-free transforms every DD op is built on: the twoSum inside
   `DoubleDouble` `add` (dd_math.hpp:178-185) and the Dekker twoProduct inside
