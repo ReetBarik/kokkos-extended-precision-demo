@@ -136,6 +136,8 @@ endfunction()
 # --- Registered tests -----------------------------------------------------
 kokkos_ep_add_test(hello_test)
 kokkos_ep_add_test(corpus_test)
+# T1.2 non-overlap invariant: oracle-independent, no contraction flags needed.
+kokkos_ep_add_test(dd_invariant_test)
 kokkos_ep_add_eft_test(dd_eft_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)

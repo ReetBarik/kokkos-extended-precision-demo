@@ -30,6 +30,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `hello_test`      | T0.1         | Harness plumbing on a trivial DD round-trip identity  |
 | `corpus_test`     | T0.2         | Corner-case corpus (`corpus.hpp`) scaffolding         |
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
+| `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 
@@ -211,6 +212,35 @@ demos and other test layers keep the project's normal flags. Reuse this helper f
 the future FF (T2.1) and QF (T3.1) EFT tests. (T1.5 later builds the full
 contraction on/off regression matrix; T1.1 only needs the posture in place so its
 own results are meaningful.)
+
+## Non-overlap invariant (Layer 2)
+
+Layer 2 (`dd_invariant_test`, **T1.2**) checks a **structural** property of every
+DD op's *output* rather than its accuracy: a double-double `(hi, lo)` must be
+**non-overlapping**, i.e. `lo` carries only bits below the last bit of `hi`. The
+bit-exact statement of that, evaluated in **raw FP64** (a single hardware add +
+compare), is
+
+```
+fl(hi + lo) == hi          (equivalently  |lo| <= 1/2 ulp(hi))
+```
+
+If `lo` held any bit at or above `hi`'s ulp, the rounded sum would land on a
+different double and the equality would fail — localizing a normalization bug to
+the exact op. Because this is a statement *about* FP64 rounding, the check is
+deliberately **not** a `__float128` promotion (that would test the exact real
+sum, a different thing). So this layer carries **no oracle and no
+`KOKKOS_EP_HAVE_QUADMATH` guard**: it runs even on a quadmath-less Kokkos.
+Accuracy-vs-oracle is the separate concern of T1.4.
+
+**Coverage.** Every DD op that returns a double-double — unary, binary, ternary
+(`fma`), two-output (`sincos`/`sinhcosh`, each output checked separately), and
+`pow_int(dd,int)`. Each op runs two passes: 10^6 op-appropriate random inputs and
+a full `corpus.hpp` pass (`include_zero=true`, `include_inf/nan=false`). Results
+outside an op's domain (NaN/inf/subnormal `hi`, or out-of-domain input) are
+**skipped, not failed**. Five ops (`add`, `multiply`, `sqrt`, `exp`, `sin`) also
+run a device pass. Registered with the plain `kokkos_ep_add_test` helper — no
+contraction flags (the invariant holds regardless of FMA contraction).
 
 ## FMA-contraction guard (Layer 5)
 

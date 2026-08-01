@@ -468,16 +468,81 @@ NOTICE for dual-license posture. (DONE)**
   (quadmath is provably exact for DD EFTs). No T1.5 contraction matrix. Demos
   untouched.
 
-**T1.2: Non-overlap invariant checks for DD.**
+**T1.2: Non-overlap invariant checks for DD. (DONE)**
 
-- For every op in `dd_math.hpp` (add/sub/mul/div/sqrt/exp/log/sin/cos/
-  tan/asin/acos/atan/sinh/cosh/tanh/asinh/acosh/atanh/pow/exp2/exp10/
-  expm1/log2/log10/log1p/round_to_nearest_int/pow_int/hypot/fmod/
-  remainder/fma), run
-  10⁶ inputs + corpus and assert `fl(hi + lo) == hi` bit-exactly on
-  outputs.
-- Report which op fails, with input bit patterns for the failing case
-  (mirroring `scripts/probe_op.cpp` output format).
+- Executed 2026-08-01. Commit `<pending>`.
+- **`tests/dd_invariant_test.cpp` (new, ~700 lines).** Layer-2 output-invariant
+  test. For every DD op that returns a double-double it asserts the NON-OVERLAP
+  invariant `fl(hi + lo) == hi` bit-exactly, evaluated in **raw FP64** (a single
+  hardware add + compare, `|lo| <= ½ ulp(hi)`). Op inventory (50 checked rows):
+  unary — abs, negate, sqrt, round_to_nearest_int, ceil, floor, round, trunc, exp,
+  exp2, exp10, expm1, log, log2, log10, log1p, sin, cos, tan, asin, acos, atan,
+  sinh, cosh, tanh, asinh, acosh, atanh, erf, erfc, tgamma; binary — add, subtract,
+  multiply, divide, pow, atan2, hypot, fmod, remainder, copysign, fmax, fmin, fdim;
+  ternary — fma; two-output — sincos (cos, sin) and sinhcosh (cosh, sinh), each
+  output checked separately; integer-scalar — pow_int(dd,int). `dd_math.hpp` NOT
+  modified (rule 4).
+- **Oracle-independent by design — no `__float128`, no `KOKKOS_EP_HAVE_QUADMATH`
+  guard.** The invariant is a statement ABOUT FP64 rounding ("adding lo back into
+  hi does not move hi"). A `__float128` promotion would test the exact real sum — a
+  DIFFERENT property that would flag a perfectly-normalized pair with nonzero lo as
+  "unequal". So the check is deliberately `(d.hi + d.lo) == d.hi` in `double`, and
+  the TU builds and RUNS even on a quadmath-less Kokkos (unlike the T1.1/T1.5 EFT
+  tests, which need the exact-product oracle). This is the ONE Phase-1 test with no
+  quadmath dependency. Accuracy-vs-oracle is the separate concern of T1.4.
+- **Two passes per op.** (a) 10⁶ op-appropriate random inputs; (b) a full corpus
+  pass via `corpus::unary<double>()` / `corpus::binary<double>()` (bundler style,
+  `include_zero=true`, `include_inf=false`, `include_nan=false`; subnormal INPUTS
+  left on — a subnormal RESULT is filtered by `result_checkable`, not here). Total
+  ~50.5M invariant checks, 1367 skipped, **0 failures**.
+- **Skip-not-fail domain gating.** A result is SKIPPED (counted, not failed) when
+  `hi` is NaN / ±inf / subnormal, or the input is outside the op's mathematical
+  domain (log of ≤0, asin of |x|>1, …). Each op carries an input-domain predicate
+  that gates BOTH the random generator's rare escapes and every corpus value BEFORE
+  the call — which additionally suppresses `dd_math.hpp`'s internal domain-guard
+  diagnostics (`DDEXP`/`DDCSSNR`/… `Kokkos::printf`s) on saturation inputs the op
+  clamps. The final run emits **zero** guard-diagnostic lines. Notable predicate
+  bounds, each mathematically motivated (see file comments): log-family restricted
+  to normal `x ∈ [1e-100, 1e100]` (keeps |log x| < ~230 so the internal refining
+  exp stays inside its Taylor iteration budget); `pow` base to the same window (its
+  internal `log(a)` hits the same limit for tiny/subnormal a); `atan2` gated on the
+  larger operand magnitude `m` (m=0 → atan2(0,0), else `1e-150 ≤ m ≤ 1e150`) so
+  `r=√(a²+b²)` neither overflows nor UNDERFLOWS to 0 — the latter (both operands
+  subnormal/smallest-normal) is what drove `angle`'s internal sincos to its
+  iteration limit, confirmed by a standalone corpus probe.
+- **Per-op reporting + failure forensics.** Each op prints
+  `op: tested=N skipped/failures` and a summary table with an `OK`/`FAIL` column;
+  the first ≤3 failures per op dump input+output bit patterns in the
+  `probe_op.cpp` hex format (`0x%016llx`). Two `KOKKOS_EP_ASSERT`s gate total
+  failures == 0.
+- **Device pass.** 5 ops (add, multiply, sqrt, exp, sin) additionally run on device
+  at 10⁵ random inputs each (host default = Serial on this build; parallel_for +
+  KOKKOS_LAMBDA), all `OK`.
+- **Test C — explicit PORT_NOTES §4 regressions.** exp at 79.5/80/85/88.7/88.72
+  (invariant holds AND result not NaN); round_to_nearest_int(19.4999993) and
+  half-integer boundaries k+0.5 (invariant); remainder(68.379, 3.5066) (invariant
+  AND sign). **Deviation, reported with evidence:** the original task text expected
+  a *positive* remainder here, but at FP64 `a/b = 19.50008… > 19.5`, so nint=20 and
+  the correct remainder is **negative** (-1.7529999999999983). Verified by TWO
+  independent FP64/quadmath oracles (libm `remainder()` and `remainderq()`); DD
+  agrees with both. The "positive" expectation was FP32-specific (there
+  `a/b ≈ 19.4999993 < 19.5`, per PORT_NOTES §4b's `ffnint` context — the literals
+  round to opposite sides of 19.5 at FP32 vs FP64). The invariant held throughout,
+  so this was a bug in the *test's expectation*, not in `dd_math` → report-and-stop
+  did not apply; Test C now gates DD's sign against `std::remainder(a,b)`.
+- **`tests/CMakeLists.txt` (edit).** Registered with the plain
+  `kokkos_ep_add_test(dd_invariant_test)` helper — NO contraction flags (the
+  invariant holds regardless of FMA contraction; this is not an EFT test).
+- **`tests/README.md` (edit).** Added the `dd_invariant_test` registry row and a
+  "Non-overlap invariant (Layer 2)" section mirroring the Layer-1/Layer-5 sections.
+- **Gate.** `cmake --build` clean, zero warnings; `ctest -V` shows all SIX tests
+  (hello_test, corpus_test, dd_invariant_test, dd_eft_test, dd_fma_guard_test,
+  dd_fma_guard_test_contract_on) Passed; per-op summary shows 0 failures and 0
+  guard-diagnostic lines; `kokkos_ep_demo --batch 100 --repeats 1 --seed 12345`
+  runs cleanly (DD table, RC 0).
+- **Scope-out.** DD real ops only — no complex ops, no accuracy-vs-oracle (T1.4),
+  no device parity beyond the 5 named ops. `dd_math.hpp` untouched; demos untouched.
+  No invariant violations found (nothing to report-and-stop on).
 - Independent of T1.1.
 
 **T1.3: Property/identity tests for DD.**
