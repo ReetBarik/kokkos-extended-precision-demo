@@ -702,17 +702,53 @@ NOTICE for dual-license posture. (DONE)**
   settings (per-target flags suffice); no runtime `#pragma FP_CONTRACT` (build-flag
   approach is cleaner and covers CUDA). `dd_math.hpp` untouched; demos untouched.
 
-**T1.6: End-to-end cancellation kernels for DD.**
+**T1.6: End-to-end cancellation kernels for DD. (DONE)**
 
-- `√(x²+1) − x` for x ∈ {1e6, 1e10, 1e15}: compare to
-  `1/(√(x²+1) + x)`. Native FP64 loses digits; DD should retain ~31.
-- Σ 1/k² for k=1..N → π²/6 (with `N=10⁶` giving ~6 digits of the tail;
-  compare DD sum's digit-count against quadmath sum).
-- Machin's formula for π (or Machin-like), evaluated in DD, digit
-  count vs `DoubleDouble_pi()`.
-- Partial sums of alternating series known to lose digits in FP64.
-- Deliverable: ~150 lines, all pass at DD's expected ~31 digit
-  precision.
+- Executed 2026-08-01. Commit `PENDING`.
+- **`tests/dd_e2e_test.cpp` (new, ~380 lines).** Layer-6 end-to-end test: four
+  classic cancellation-hostile kernels evaluated in DD and scored in digits of
+  accuracy against `__float128` / closed-form oracles, mean-gated at 28.0 digits.
+  Whole file is `#ifdef KOKKOS_EP_HAVE_QUADMATH`; runtime-SKIP 77 without quadmath.
+  Host-side only (the kernels are inherently serial reductions/recurrences).
+  `dd_math.hpp` NOT modified (rule 4).
+- **Two-oracle strategy (K2, K4).** Each sum is scored twice. The
+  DD-vs-quadmath-partial-sum comparison carries the arithmetic-precision claim:
+  identical N, identical summation order, identical terms, so it isolates DD's
+  accumulation quality from truncation. The DD-vs-closed-form comparison
+  (K2 vs π²/6, K4 vs ln 2) is a truncation-limited sanity check, gated at
+  `truncation_floor − 1` digit of slack. At N=10⁶ the floor is ~6 digits: the
+  Basel tail Σ_{N+1}^∞ 1/k² ≈ 1/N, and the alternating-series error is bounded by
+  the first omitted term ≈ 1/N.
+- **K1 deviation from the literal spec (justified, confirmed with plan owner).**
+  The T1.6 spec named the naive `√(x²+1) − x` as the DUT and expected ~31 digits;
+  that expectation is numerically false and NOT a library defect. Catastrophic
+  cancellation loses ~2·log₁₀(x) digits regardless of arithmetic precision
+  (Higham, *Accuracy and Stability of Numerical Algorithms*, §1.7). Ship shape:
+  `K1_stable` gates `1/(√(x²+1) + x)` vs f128 — the algebraic rearrangement that
+  eliminates the cancellation; `K1_naive_report` computes and reports the naive
+  form in DD AND FP64 per magnitude to demonstrate DD's ~16-digit lift under a
+  hostile algorithm. Together — flat ~31 digits on the stable form (competent
+  algorithm) plus the ~16-digit naive shift FP64→DD (hostile algorithm) —
+  demonstrate DD's ~31-digit precision end to end.
+- **Per-kernel results (mean_digits / tolerance 28.0).** `K1_stable` 31.00
+  (harness cap; uncapped ~32.6), `K2_basel` 29.48, `K3_machin` 28.09,
+  `K4_alt_harmonic` 29.56 — all PASS. `K1_naive_report` DD {21.25, 16.44, 1.54}
+  vs FP64 {5.12, 0.00, 0.00} at x ∈ {1e6, 1e10, 1e15}. K2 sanity vs π²/6 6.22
+  digits (truncation floor 6); K4 sanity vs ln 2 6.14 digits (truncation floor 6).
+- **K3 margin note.** `K3_machin` clears the 28.0 gate by ~0.09 digits.
+  Acceptable because the kernel is fully deterministic (no RNG, fixed constants),
+  so 28.09 is reproducible run-to-run, not a flaky sample. No proven DDFUN `atan`
+  bound is available — "observed empirically" per rule 5. Flagged for revisit if a
+  future toolchain shift (Clang vs GCC, different libm) slips it below 28.0.
+- **Tolerance rationale.** DD targets ~31.9 digits, the harness caps at 31
+  (`BackendTraits<DD>::max_digits`), leaving ~3 digits of headroom for accumulated
+  round-off in composed / 10⁶-term kernels → 28.0, applied uniformly to the
+  arithmetic-precision comparisons.
+- **`tests/CMakeLists.txt` (edit).** Registered with the plain
+  `kokkos_ep_add_test(dd_e2e_test)` helper (a regular test, not an EFT test —
+  no contraction flags). **`tests/README.md` (edit).** Registry table row added.
+- **Scope-out.** No `dd_complex.hpp`, no FF/QF backends, no per-op differential
+  accuracy (that is the T1.4 sibling). `dd_math.hpp` untouched; demos untouched.
 
 ### Phase 2 — FF validation (6 tasks)
 
