@@ -417,18 +417,56 @@ NOTICE for dual-license posture. (DONE)**
 
 ### Phase 1 — DD validation (6 tasks)
 
-**T1.1: EFT unit tests for DD.**
+**T1.1: EFT unit tests for DD. (DONE)**
 
-- Test `twoSum` (from `add`) and Dekker `twoProd` (from `multiply`) at
-  the primitive level. Extract or wrap the primitives cleanly for
-  isolated testing.
-- Ground truth: quadmath. Assert `(hi + lo) == exact_sum` in quadmath.
-- 10⁶ random + full corpus.
-- Include the FMA-contraction issue: DD `multiply` uses Dekker splitting
-  with constant `134217729.0` (2²⁷+1), not `twoProdFMA`. Any
-  compiler-driven fusion of `a.hi * b.hi - c11` into a single FMA
-  breaks the EFT. Verify no fusion occurs in the compiled binary
-  (inspect assembly OR use `-ffp-contract=off` for the test target).
+- Executed 2026-08-01. Commit `T1.1_COMMIT_HASH`.
+- **`tests/dd_eft_test.cpp` (new, ~470 lines).** Layer-1 EFT unit test for the
+  two error-free transforms every DD op is built on: the twoSum inside
+  `DoubleDouble` `add` (dd_math.hpp:178-185) and the Dekker twoProduct inside
+  `multiply` (dd_math.hpp:197-211, ≡ `two_prod` dd_math.hpp:270-278).
+- **EFT primitive extraction — mirror-and-comment.** `add`/`multiply` embed the
+  transforms in longer sequences that also fold in the input `.lo` components; for
+  EFT testing we want the transform of two RAW doubles. So `two_sum` /
+  `two_prod_dekker` are duplicated into the test file (bit-identical to the
+  embedded transforms when `.lo == 0`), each with a comment citing the source
+  lines. `dd_math.hpp` is NOT modified (rule 4). The duplication doubles as
+  documentation of exactly what is under test.
+- **Ground truth `__float128` — provable, not approximate.** Exact FP64 sum ≤54
+  bits, exact FP64 product ≤106 bits, both ≤ binary128's 113-bit mantissa, so
+  widening operands and computing sum/product in `__float128` is exact. Assert
+  `(float128)hi + (float128)lo == (float128)a {+,*} (float128)b` bit-exactly.
+  Oracle via Kokkos LIBQUADMATH; runtime-SKIP (77) if absent (hello_test pattern).
+- **Coverage.** Test A (twoSum) and Test B (Dekker twoProd) each run 4 corpora:
+  10⁶ uniform in [-1e100,1e100], 10⁶ uniform in [-1,1], 10⁵ `|a|≫|b|` pairs
+  (`b=a·2^-k`, k∈[1,60]), and the full `corpus::unary<double>()` cross-product
+  (i<j). Result: **A tested 2,113,526 / 0 failures; B tested 2,110,183 / 0
+  failures.** Test C: 14/14 named hard cases (exact cancellation, both-subnormal,
+  ±0, Bailey's `1.0 + 2^-53` → `lo` exactly 2^-53, π·π/e·e/√2·√2 spot-checks).
+  Test D: device parity via `parallel_for` (Serial here → reduces to host, as the
+  spec allows; catches device FP differences on CUDA/HIP/SYCL) — 200,000/200,000.
+- **Out-of-domain inputs are SKIPPED, not failed.** twoSum skips only non-finite
+  pairs and overflowing sums. Dekker twoProduct additionally skips subnormal
+  operands, splitter-overflow magnitudes (`|x| ≥ 2^996`, checked BEFORE the
+  zero-product shortcut because `x·0` still splits `x`), and products that overflow
+  or gradually underflow (error term would fall subnormal). These are documented
+  limits of Dekker's method (Dekker 1971; Muller et al. HFPA §4.4), not defects in
+  `multiply`. The domain predicate tests the EXACT (float128) product, not the
+  rounded FP64 product (which flushes to 0 under gradual underflow). No unguarded
+  splitter-overflow bug was found in `ddmul` itself.
+- **FMA-contraction posture.** `tests/CMakeLists.txt` gains
+  `kokkos_ep_add_eft_test(<name>)` = `kokkos_ep_add_test` + per-target
+  `-ffp-contract=off` (GNU/Clang, `COMPILE_LANGUAGE:CXX`), `-fp-model=precise`
+  (Intel), `--fmad=false` (nvcc, `COMPILE_LANGUAGE:CUDA`, gated on
+  `Kokkos_ENABLE_CUDA`). Per-target, not global, so demos/other layers keep normal
+  flags. Verified `-ffp-contract=off` present in the verbose compile line. Reused
+  by FF (T2.1) and QF (T3.1).
+- **Gate.** `cmake --build` clean, zero warnings from `dd_eft_test.cpp`;
+  `ctest -V` shows hello_test, corpus_test, dd_eft_test all Passed;
+  `kokkos_ep_demo --batch 100 --repeats 1` unchanged (no regression).
+- **Scope-out.** Only the twoSum-in-`add` and Dekker-twoProd-in-`multiply` EFTs
+  (Layer 1). Higher-level ops → T1.2/T1.3/T1.4. No FF/QF EFTs (T2.1/T3.1). No MPFR
+  (quadmath is provably exact for DD EFTs). No T1.5 contraction matrix. Demos
+  untouched.
 
 **T1.2: Non-overlap invariant checks for DD.**
 

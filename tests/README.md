@@ -14,11 +14,22 @@ end-to-end cancellation kernels. The harness in `test_utils.hpp` provides the
 shared plumbing so a single test file can target any backend without
 duplication.
 
-As of T0.2 there are two scaffolding tests: `hello_test.cpp`, a smoke test that
-exercises the harness end-to-end (Kokkos init, input generation, host↔device
+Two scaffolding tests exercise the harness itself: `hello_test.cpp`, a smoke test
+that exercises the harness end-to-end (Kokkos init, input generation, host↔device
 copy, oracle comparison, reporting) on a trivial DD round-trip identity; and
 `corpus_test.cpp`, which validates the corner-case corpus (`corpus.hpp`) itself.
-Neither runs a real DD math op — real correctness coverage begins in Phase 1.
+Neither runs a real DD math op.
+
+Real DD correctness coverage begins in Phase 1 with `dd_eft_test.cpp` (**T1.1**),
+the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
+
+## Registered tests
+
+| Test              | Layer / task | What it covers                                        |
+|-------------------|--------------|-------------------------------------------------------|
+| `hello_test`      | T0.1         | Harness plumbing on a trivial DD round-trip identity  |
+| `corpus_test`     | T0.2         | Corner-case corpus (`corpus.hpp`) scaffolding         |
+| `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
 
 ## How to run
 
@@ -154,6 +165,50 @@ if (ann && stats.min >= ann->min_digits_allowed) {
 **Source of truth:** `PORT_NOTES.md` on branch `fffunKokkos` — §4 (two outright
 bugs → the named regression accessors) and §5 (conditioning limits → the
 expected-min-drop registry). The FF-side corpus specialization happens in Phase 2.
+
+## EFT tests (Layer 1)
+
+Layer 1 of the six-layer suite validates the two **error-free transforms** that
+every double-word operation is built on:
+
+- `twoSum(a, b) -> (s, e)`: `s = fl(a+b)` and `e = (a+b) - s` **exactly**.
+- `twoProd_Dekker(a, b) -> (p, e)`: `p = fl(a*b)` and `e = a*b - p` **exactly**.
+
+`dd_eft_test.cpp` (T1.1) tests these at the raw-`double` level — the twoSum
+embedded in `DoubleDouble` `add` and the Dekker twoProduct embedded in `multiply`
+(mirrored into the test file for RAW doubles; `dd_math.hpp` is not modified). If
+either EFT is not bit-exact, nothing downstream (sqrt/exp/log/…) is trustworthy,
+so this layer runs first. Ground truth is `__float128`, which is **provable, not
+approximate**: the exact FP64 sum needs ≤54 bits and the exact FP64 product ≤106
+bits, both of which fit in binary128's 113-bit mantissa, so widening the operands
+and summing/multiplying in `__float128` is exact.
+
+Inputs outside each transform's proven domain are **skipped, not failed**: twoSum
+skips only non-finite pairs and sums that overflow; Dekker twoProduct additionally
+skips subnormal operands, splitter-overflow magnitudes (`|x| ≥ 2^996`), and
+products that overflow or gradually underflow (error term would fall subnormal) —
+these are documented limits of Dekker's method, not defects in `multiply`.
+
+### Contraction-off requirement
+
+EFT tests **must** compile with FMA contraction disabled. Dekker's twoProduct
+depends on `a1*b1 - c11` being two distinct rounded operations; if the compiler
+fuses them into a single FMA, the error term collapses to zero and the transform
+silently breaks — the test would then validate a transform the shipped binary does
+not perform. `tests/CMakeLists.txt` provides a helper for this:
+
+```cmake
+kokkos_ep_add_eft_test(dd_eft_test)
+```
+
+`kokkos_ep_add_eft_test(<name>)` is `kokkos_ep_add_test(<name>)` plus per-target
+contraction-off flags: `-ffp-contract=off` (GNU/Clang, on `COMPILE_LANGUAGE:CXX`),
+`-fp-model=precise` (Intel), and `--fmad=false` (nvcc, on `COMPILE_LANGUAGE:CUDA`,
+applied only when `Kokkos_ENABLE_CUDA`). Applied per target, not globally, so the
+demos and other test layers keep the project's normal flags. Reuse this helper for
+the future FF (T2.1) and QF (T3.1) EFT tests. (T1.5 later builds the full
+contraction on/off regression matrix; T1.1 only needs the posture in place so its
+own results are meaningful.)
 
 ## Framework
 
