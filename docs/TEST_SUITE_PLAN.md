@@ -376,6 +376,45 @@ through Kokkos. (DONE)**
 - Bit-exactness is by construction (one-line forwards), so the refactor cannot
   change oracle values.
 
+**T0.5: License hygiene — correct DDFUN attribution; add repo LICENSE /
+NOTICE for dual-license posture. (DONE)**
+
+- Executed 2026-08-01. Commit `<hash>`.
+- **Problem fixed.** T0.4 had mechanically stamped Kokkos's
+  `Apache-2.0 WITH LLVM-exception` SPDX onto `third_party/include/dd_math.hpp`
+  and `dd_complex.hpp` to match Kokkos style. Those two files are C++/Kokkos
+  ports of DDFUN v04 and are governed by David H. Bailey's **DHB-License**
+  (modified BSD-3-Clause + §3 grant-back), not Kokkos's license. A Kokkos SPDX on
+  a DDFUN derivative does not relicense DDFUN; it makes the file's status
+  ambiguous. T0.5 corrects this and establishes the repo's overall dual-license
+  posture.
+- **Header rewrite.** Removed the two T0.4 SPDX lines from `dd_math.hpp` and
+  `dd_complex.hpp`; replaced with a `LicenseRef-DHB-License` block (David H.
+  Bailey copyright 2024 + "Modifications Copyright (c) 2026 UChicago Argonne,
+  LLC"), DDFUN v04 provenance, and a modifications list. Additive only — no code
+  inside the headers changed.
+- **License files added.** Top-level `LICENSE` (Apache-2.0, verbatim from
+  apache.org); `LICENSES/Apache-2.0.txt` (identical duplicate for SPDX tooling);
+  `LICENSES/LicenseRef-DHB-License.txt` (verbatim byte-for-byte from
+  davidhbailey.com, CRLF preserved, 24 lines,
+  SHA-256 `8e167fe5…5fa5200`); `NOTICE.md` (plain-English per-file mapping, §3
+  grant-back explanation, contacts).
+- **`patches/kokkos_complex_quad_math.hpp`** verified correct
+  (`Apache-2.0 WITH LLVM-exception`, Kokkos-style extension, not a DDFUN
+  derivative) and left unchanged. `patches/README.md` gained a "License" section
+  explaining why it matches Kokkos's license.
+- **This doc.** Added the "Licensing" section above (dual-license posture,
+  rationale, §3 grant-back, file-to-license mapping, Phase 2/3 FF/QF lineage
+  checkboxes, Argonne review note); corrected the "Upstreaming considerations"
+  SPDX bullet, which had assumed the DDFUN files were Apache-2.0.
+- **Scope-out.** No code changed; no outreach to David H. Bailey or Argonne
+  tech-transfer (Reet's follow-ups); no touching of FF/QF headers on sibling
+  branches (their license lineage is a Phase 2/3 kickoff item).
+- **Gate.** `grep -rn "SPDX-License-Identifier"` returns exactly the expected
+  set (two DHB-License headers, one Apache-2.0-WITH-LLVM-exception patch, plus
+  the license-text files themselves). Build unchanged; `ctest -V` shows
+  hello_test AND corpus_test passing; demo smoke test unchanged.
+
 ### Phase 1 — DD validation (6 tasks)
 
 **T1.1: EFT unit tests for DD.**
@@ -711,12 +750,19 @@ Kokkos later is a mechanical extraction rather than a rewrite. Locked in by T0.4
   `Kokkos::exp(double)` / `Kokkos::exp(__float128)`. Arithmetic
   (`add`/`subtract`/`multiply`/`divide`) is reached via operators + explicit ADL
   only — deliberately NOT re-exposed as `Kokkos::add`.
-- **SPDX + copyright headers** on the future-upstream files
-  (`third_party/include/dd_math.hpp`, `dd_complex.hpp`, and the `patches/`
-  copy), using the exact header from `Kokkos_QuadPrecisionMath.hpp`, with the
-  "Ported from DDFUN (David H. Bailey)" attribution preserved as a second block
-  below the SPDX. Downstream-only files (demos, benchmarks, tests, this repo's
-  harness, scripts) are deliberately header-free.
+- **SPDX + copyright headers** on the future-upstream files. Corrected in T0.5:
+  the DDFUN-derived files (`third_party/include/dd_math.hpp`, `dd_complex.hpp`)
+  carry the **DHB-License** (`SPDX-License-Identifier: LicenseRef-DHB-License`),
+  NOT Kokkos's Apache-2.0 WITH LLVM-exception — they are ports of DDFUN and
+  cannot be relicensed by us (see the "Licensing" section below). The
+  Kokkos-style extension header `patches/kokkos_complex_quad_math.hpp` is the one
+  file that genuinely carries `Apache-2.0 WITH LLVM-exception` (matching Kokkos
+  for upstream compatibility). Whenever these types are upstreamed, the DDFUN
+  attribution and DHB-License terms travel with the DDFUN-derived files; a Kokkos
+  PR would need Kokkos maintainers' acceptance of the DHB-License for those two
+  headers (or a clean-room reimplementation). Downstream-only files (demos,
+  benchmarks, tests, this repo's harness, scripts) are deliberately header-free
+  and covered by the top-level `LICENSE` (Apache-2.0).
 - **Test structure.** Test logic is written against `BackendTraits<Backend>` so
   it could later drop into Kokkos's GoogleTest suite with minimal rewrite.
   Free-form `printf` is confined to the harness itself (`test_utils.hpp`), not
@@ -724,6 +770,90 @@ Kokkos later is a mechanical extraction rather than a rewrite. Locked in by T0.4
 - **PR scope when it happens:** types + math functions + unit tests only. The
   demos, benchmarks, and this repo's CTest harness stay downstream. Opening a
   Kokkos PR is a future decision, made only after the test suite proves value.
+
+## Licensing
+
+Locked in by T0.5. This repository is **dual-licensed** (see `NOTICE.md` for the
+authoritative, user-facing summary; this section is the rationale).
+
+### Posture
+
+- **Apache-2.0** — all Reet-authored original work: demos, tests, harness,
+  corpus, scripts, docs. Covered by the top-level `LICENSE` (mirrored at
+  `LICENSES/Apache-2.0.txt` for SPDX tooling). These files carry NO per-file SPDX
+  header; the top-level `LICENSE` covers them.
+- **DHB-License** (`LicenseRef-DHB-License`) — the two DDFUN-derived headers,
+  `third_party/include/dd_math.hpp` and `dd_complex.hpp`. Full verbatim text in
+  `LICENSES/LicenseRef-DHB-License.txt`.
+- **Apache-2.0 WITH LLVM-exception** — `patches/kokkos_complex_quad_math.hpp`,
+  the Kokkos-style complex-quadmath extension header. Matches Kokkos itself so it
+  can be upstreamed verbatim.
+
+### Why the split
+
+DDFUN is authored by David H. Bailey and released under the **DHB-License**, a
+modified BSD-3-Clause variant (Copyright (c) 2024 David H. Bailey). Our
+`dd_math.hpp` / `dd_complex.hpp` are C++/Kokkos ports of DDFUN v04 — derivative
+works. We cannot relicense DDFUN; the port inherits the DHB-License unchanged.
+T0.4 had mechanically stamped Kokkos's Apache-2.0 WITH LLVM-exception onto these
+two files to match Kokkos style; T0.5 corrected that, because a Kokkos SPDX on a
+DDFUN derivative does not relicense DDFUN — it only makes the file's license
+status ambiguous.
+
+The complex-quadmath patch, by contrast, is a genuine Kokkos-style extension (a
+companion to `Kokkos_QuadPrecisionMath.hpp`), not a DDFUN derivative, so it
+correctly carries Kokkos's license.
+
+### DHB-License §3 grant-back
+
+The DHB-License adds a non-standard §3 to the usual BSD-3-Clause conditions: if
+you publish modifications/enhancements to the DDFUN-derived files publicly
+(which this repo does) without a separate written agreement, you thereby grant
+David H. Bailey a non-exclusive, royalty-free, perpetual license to use, modify,
+distribute, and sublicense those enhancements. In practice: anyone contributing
+improvements to `dd_math.hpp` / `dd_complex.hpp` here grants Bailey the right to
+fold them back into DDFUN, and anyone redistributing those files inherits this
+term. (The DDFUN website also asks commercial users to contact the author at
+`dhbailey@lbl.gov`; this is a courtesy pointer, not a term of the license text.)
+
+### File-to-license mapping
+
+| File(s) | License |
+|---|---|
+| `third_party/include/dd_math.hpp`, `dd_complex.hpp` | DHB-License (`LICENSES/LicenseRef-DHB-License.txt`) |
+| `patches/kokkos_complex_quad_math.hpp` | Apache-2.0 WITH LLVM-exception |
+| Everything else (demos, tests, harness, corpus, scripts, docs) | Apache-2.0 (`LICENSE`) |
+
+### Phase 2/3 open question — FF and QF port lineage
+
+FF (`fffunKokkos`) and QF (`qffunKokkos`) must each have their license verified
+against their actual source tree **before** merging into `main`:
+
+- If ported from **DDFUN** directly → inherits the **DHB-License** (Bailey,
+  personal copyright, `dhbailey@lbl.gov`).
+- If ported from **QD** (github.com/BL-highprecision/QD) → inherits the
+  **different** `LBNL-BSD-License` (triple-authored Bailey/Li/Hida; LBNL
+  *institutional* copyright; commercial contact `ipo@lbl.gov`, not Bailey
+  personally).
+
+These are distinct licenses with distinct copyright holders and contacts; the
+correct header must be applied per source tree, not assumed uniform. Action
+items:
+
+- [ ] **T2.0 kickoff:** verify FF port lineage (DDFUN vs QD) and apply the
+      correct license header before merging `fffunKokkos` into `main`.
+- [ ] **T3.0a kickoff:** verify QF port lineage (DDFUN vs QD — QF is modeled on
+      QD's `qd_real.cc`, so likely `LBNL-BSD-License`) and apply the correct
+      license header before merging `qffunKokkos` into `main`.
+
+### Argonne institutional review (Reet's follow-up)
+
+Non-blocking for implementation, but must happen **before opening any Kokkos
+PR**: a ~10-minute email to Argonne tech-transfer to confirm (a) Apache-2.0 for
+the original code is approved, and (b) the DHB-License redistribution posture for
+the DDFUN-derived files is acceptable. The "Modifications Copyright" holder used
+for the ported files is "UChicago Argonne, LLC", the standard attribution form
+for Argonne open-source releases.
 
 ## Deliverable at end of Phase 3
 

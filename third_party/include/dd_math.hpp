@@ -1,5 +1,28 @@
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-// SPDX-FileCopyrightText: Copyright Contributors to the Kokkos project
+// SPDX-License-Identifier: LicenseRef-DHB-License
+// SPDX-FileCopyrightText: Copyright (c) 2024 David H. Bailey
+// SPDX-FileCopyrightText: Modifications Copyright (c) 2026 UChicago Argonne, LLC
+//
+// Ported from DDFUN v04:
+//   https://www.davidhbailey.com/dhbsoftware/ddfun-v04.tar.gz
+//   Original author: David H. Bailey (LBNL retired / UC Davis)
+//   Original license: DHB-License (modified BSD-3-Clause with §3
+//     grant-back clause). Full text: LICENSES/LicenseRef-DHB-License.txt
+//     or https://www.davidhbailey.com/dhbsoftware/DHB-License.txt.
+//
+// This C++/Kokkos port is a derivative work distributed under the
+// same DHB-License. See §3 of that license regarding upstream
+// contribution rights.
+//
+// Modifications from the original DDFUN v04 sources:
+//   * Translated from Fortran-90 (ddfuna.f90, ddfune.f90) to
+//     header-only C++17.
+//   * Adapted to Kokkos: every function KOKKOS_INLINE_FUNCTION for
+//     host + device portability across CUDA/HIP/SYCL/OpenMP-target.
+//   * Namespaced as Kokkos::Experimental::DoubleDouble with STL-
+//     style free-function names and ADL-friendly re-exposure under
+//     namespace Kokkos, for potential upstreaming to Kokkos.
+//   * See docs/TEST_SUITE_PLAN.md "Upstreaming considerations" for
+//     naming and API conventions.
 
 #pragma once
 

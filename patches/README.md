@@ -78,3 +78,25 @@ bit-exact against `::cexpq`.
 - Kokkos 5.1.0 (`KOKKOS_VERSION 50100`), built with
   `-DKokkos_ENABLE_LIBQUADMATH=ON`, Serial backend, GCC 13.3.0.
 - Install prefix used for the demos: `/home/rbarik/kokkos-install-quadmath`.
+
+### License
+
+`kokkos_complex_quad_math.hpp` is licensed **Apache-2.0 WITH
+LLVM-exception**, matching Kokkos's own license — carried in its SPDX
+header:
+
+```
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// SPDX-FileCopyrightText: Copyright Contributors to the Kokkos project
+```
+
+This is deliberate: the file is a Kokkos-style extension header (a
+companion to `Kokkos_QuadPrecisionMath.hpp`), **not** a DDFUN derivative.
+Licensing it to match Kokkos means it can be upstreamed verbatim if a
+Kokkos PR is ever opened, with no relicensing step.
+
+This is separate from the DDFUN-derived files
+(`third_party/include/dd_math.hpp`, `dd_complex.hpp`), which are C++/Kokkos
+ports of DDFUN and carry the **DHB-License** instead. See the top-level
+`NOTICE.md` for the full per-file license mapping and
+`docs/TEST_SUITE_PLAN.md` "Licensing" section for the rationale.
