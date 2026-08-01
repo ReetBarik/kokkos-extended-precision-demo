@@ -547,7 +547,7 @@ NOTICE for dual-license posture. (DONE)**
 
 **T1.3: Property/identity tests for DD. (DONE)**
 
-- Executed 2026-08-01. Commit `PENDING`.
+- Executed 2026-08-01. Commit `42b802b`.
 - **`tests/dd_property_test.cpp` (new, ~560 lines).** Layer-3 algebraic-identity
   test: do the DD ops compose the way the algebra says they should? Identities are
   split by whether verification needs the `__float128` oracle at all.
