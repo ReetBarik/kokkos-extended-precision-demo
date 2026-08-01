@@ -500,14 +500,74 @@ NOTICE for dual-license posture. (DONE)**
   (PORT_NOTES §5).
 - Depends on T0.1, T0.2.
 
-**T1.5: FMA-contraction guard for DD.**
+**T1.5: FMA-contraction guard for DD. (DONE)**
 
-- Compile T1.1 tests with `--fmad=false` (CUDA) and `-ffp-contract=off`
-  (host); verify pass.
-- Then with contraction on, verify `multiply`'s Dekker splitting sequence
-  doesn't silently fold. Test-only; production build unchanged.
-- One-time infra + regression test.
-- Independent.
+- Executed 2026-08-01. Commit `PENDING`.
+- **`tests/dd_fma_guard_test.cpp` (new, ~340 lines).** Layer-5 positive test of
+  the FMA-contraction posture T1.1 adopts defensively. Builds the identical Dekker
+  `twoProduct` (mirrored from dd_math.hpp:197-211 / `two_prod` 270-278, copied
+  verbatim from `dd_eft_test.cpp` per rule "tests are standalone; duplication is
+  acceptable") under BOTH contraction settings and cross-checks against a
+  contraction-immune `__float128` oracle. `twoSum` is included as a labeled CONTROL
+  (no mul-then-± adjacency → contraction-immune → must stay exact both ways).
+  `dd_math.hpp` NOT modified (rule 4).
+- **Source-layout choice: single-source, two targets** (not two-sources-with-
+  shared-header). The whole point is to run the IDENTICAL body over IDENTICAL
+  inputs under different flags; compiling the same bytes twice makes "identical" a
+  build-system guarantee, not a claim a reviewer must verify across two files that
+  can drift. Per-variant behavior is selected by compile definitions the CMake
+  helpers set: `KOKKOS_EP_CONTRACTION_MODE` (0 = OFF/gate, 1 = ON/report) and
+  `KOKKOS_EP_BASELINE_PATH` (ON only).
+- **Contraction-immune oracle.** Reference `(p_ref, e_ref)` built from the exact
+  `__float128` product (`p_ref = (double)(f128)a*(f128)b`; `e_ref` = exact residual,
+  fits in a double since the 106-bit FP64 product fits binary128's 113-bit
+  mantissa). Computed via a single f128 multiply — no mul-then-add adjacency for a
+  compiler to contract, so the ground truth cannot itself be corrupted.
+- **`tests/CMakeLists.txt` (edit).** Added companion helper
+  `kokkos_ep_add_eft_test_contract_on(name)` mirroring `kokkos_ep_add_eft_test`
+  but forcing contraction ON into a distinct `<name>_contract_on` target:
+  `-ffp-contract=fast` (GNU/Clang — the spelling both honor identically; GCC's
+  `=on` is accepted too but `=fast` is chosen for clang parity), `-fp-model=fast`
+  (Intel), `--fmad=true` (nvcc default, stated explicitly). Also threads
+  `KOKKOS_EP_CONTRACTION_MODE=0` into `kokkos_ep_add_eft_test` (harmless for
+  `dd_eft_test`, which ignores it). Registered BOTH variants:
+  `kokkos_ep_add_eft_test(dd_fma_guard_test)` (OFF) and
+  `kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)` (ON, suffixed target, no
+  name clash).
+- **Regression posture / baseline: implemented, not deferred.** OFF variant
+  fail-gates (`KOKKOS_EP_ASSERT F == 0` — stronger than T1.1). ON variant is a
+  reporter: always exits 0, prints `tested=N exact=M mismatches=F`, and compares
+  `F` to `tests/dd_fma_guard_baseline.txt` (committed with the observed count),
+  printing `baseline: OK` or `*** DRIFT ***`. Drift is WARN-only (a compiler/ISA
+  upgrade changing contraction behavior is a signal to investigate, not a CI
+  failure). Chose to implement (~30 lines) rather than defer: it is the only thing
+  that turns the ON variant from a one-shot print into a cross-upgrade sentinel,
+  which is the stated goal; missing/unparseable baseline degrades gracefully to
+  "print + hint", still exit 0.
+- **Observed contraction-ON mismatch count on this compiler: `F = 0`**
+  (GCC 13.3.0, `-O3 -ffp-contract=fast`, baseline x86-64 Serial, 220,366 in-domain
+  checks: 110,183 host + 110,183 device). **Nuance worth recording:** `F = 0` here
+  is NOT merely "GCC declines to contract." Under `-mfma` GCC *does* emit 8 FMA
+  instructions for the Dekker sequence (verified in `-S` output: 5× `vfmsub*sd` +
+  3× `vfmadd*sd`), yet `F` stays 0 — Veltkamp splitting (split = 2^27+1) makes each
+  partial product `a1*b1`/`a1*b2`/`a2*b1`/`a2*b2` ≤52 bits and thus exactly
+  representable, so fusing `partial ± accumulator` changes no rounding. At the
+  project's actual build flags (no `-mfma`/`-march`) GCC emits plain mul+sub and
+  contracts nothing. Either way the shipped Dekker error term is bit-exact on this
+  toolchain; `-ffp-contract=off` is belt+suspenders here, and T1.5 will catch any
+  future toolchain where that stops being true.
+- **Sensitivity verified.** A deliberately-broken twoProduct (dropped `a2*b2`
+  term) compiled under the ON posture flags 209,310/220,366 mismatches and still
+  exits 0 — confirming the guard actually detects a wrong error term (it is not a
+  vacuous pass) and that the ON variant reports rather than gates.
+- **Gate.** `cmake --build` clean, zero warnings; `ctest -V` shows all 5 tests
+  (hello_test, corpus_test, dd_eft_test, dd_fma_guard_test [OFF, asserts],
+  dd_fma_guard_test_contract_on [ON, exits 0 with report]) Passed;
+  `kokkos_ep_demo --batch 100 --repeats 1` unchanged.
+- **Scope-out.** Dekker twoProduct ONLY (the one contraction-hazard primitive); no
+  extension to log/sin/etc.; no rebuilding Kokkos under different contraction
+  settings (per-target flags suffice); no runtime `#pragma FP_CONTRACT` (build-flag
+  approach is cleaner and covers CUDA). `dd_math.hpp` untouched; demos untouched.
 
 **T1.6: End-to-end cancellation kernels for DD.**
 

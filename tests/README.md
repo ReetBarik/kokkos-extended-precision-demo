@@ -30,6 +30,8 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `hello_test`      | T0.1         | Harness plumbing on a trivial DD round-trip identity  |
 | `corpus_test`     | T0.2         | Corner-case corpus (`corpus.hpp`) scaffolding         |
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
+| `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
+| `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 
 ## How to run
 
@@ -209,6 +211,57 @@ demos and other test layers keep the project's normal flags. Reuse this helper f
 the future FF (T2.1) and QF (T3.1) EFT tests. (T1.5 later builds the full
 contraction on/off regression matrix; T1.1 only needs the posture in place so its
 own results are meaningful.)
+
+## FMA-contraction guard (Layer 5)
+
+Layer 5 (`dd_fma_guard_test`, **T1.5**) is the *positive* counterpart to the
+defensive posture above. T1.1 builds `-ffp-contract=off` to protect its **own**
+results; T1.5 asks whether that posture is actually **needed** by building the
+identical Dekker `twoProduct` under **both** contraction settings and cross-
+checking against a contraction-immune `__float128` oracle.
+
+**One source, two targets.** `dd_fma_guard_test.cpp` is compiled twice:
+
+```cmake
+kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)
+```
+
+Compiling the *same bytes* under different flags makes "identical inputs, identical
+logic" a guarantee of the build system rather than a claim a reviewer must verify
+across two drifting files. The only per-variant knobs are compile definitions the
+helpers set: `KOKKOS_EP_CONTRACTION_MODE` (`0` = OFF/gate, `1` = ON/report) and,
+for the ON variant, `KOKKOS_EP_BASELINE_PATH`.
+
+`kokkos_ep_add_eft_test_contract_on(<name>)` mirrors `kokkos_ep_add_eft_test` but
+forces contraction **on** into a distinct `<name>_contract_on` target:
+`-ffp-contract=fast` (GNU/Clang), `-fp-model=fast` (Intel), and `--fmad=true`
+(nvcc's default, stated explicitly). Both variants coexist because of the suffix.
+
+**OFF variant — gates.** Asserts the Dekker error term is bit-exact (`F == 0`);
+this is a stronger restatement of what T1.1 asserts, plus a `twoSum` control that
+must stay exact (it has no contractible mul-then-± adjacency).
+
+**ON variant — reports.** The compiler is *allowed* to contract; two outcomes,
+both informative, neither a failure:
+
+- `F == 0` — the compiler either did not contract, **or** contracted harmlessly.
+  (On GCC 13.3.0 the latter holds: even with `-mfma` it emits 8 FMA instructions
+  for the Dekker sequence, yet `F` stays 0 — Veltkamp splitting makes each partial
+  product exactly representable, so fusing `partial ± accumulator` introduces no
+  rounding difference. On this ISA target the `-ffp-contract=off` posture is
+  belt+suspenders.)
+- `F > 0` — the compiler contracted in a way that *does* change the result; the
+  `-ffp-contract=off` posture in `dd_math.hpp`'s build is **required**, and `F` is
+  the evidence.
+
+The ON variant **always exits 0** — its value is the number, not a gate. A
+*change* in `F` between builds is the regression signal, so the observed count is
+recorded in `tests/dd_fma_guard_baseline.txt`; each ON run compares its live count
+to that baseline and prints `baseline: OK` or `*** DRIFT ***` (a warning, never a
+failure — investigate, then update the file if the new value is correct for the new
+toolchain). **Scope:** the Dekker `twoProduct` only — the one DD primitive where
+contraction is a documented hazard.
 
 ## Framework
 

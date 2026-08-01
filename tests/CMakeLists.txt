@@ -80,9 +80,63 @@ function(kokkos_ep_add_eft_test name)
   if(Kokkos_ENABLE_CUDA)
     target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
   endif()
+  # Tell the test source it is the contraction-OFF variant (gate on mismatches).
+  # dd_fma_guard_test.cpp keys its gate-vs-report behavior on this; other EFT
+  # tests ignore it. Harmless where unused.
+  target_compile_definitions(${name} PRIVATE KOKKOS_EP_CONTRACTION_MODE=0)
+endfunction()
+
+# --- Helper: companion EFT test with FMA contraction forced ON ------------
+# T1.5's positive counterpart to kokkos_ep_add_eft_test. It builds the SAME test
+# source into a SEPARATE executable (<name>_contract_on) compiled with contraction
+# forced ON, so the Dekker twoProduct is exercised under the posture the OFF helper
+# protects against. Whether that produces the same (compiler didn't contract) or
+# different (compiler did contract) results, the outcome is recorded rather than
+# gated — the ON test is a REPORTER (see dd_fma_guard_test.cpp header). Both
+# variants coexist because the target name gets the _contract_on suffix.
+#
+# We do not call kokkos_ep_add_test here (it would collide on the base target name
+# and apply no contraction flags); instead we build the suffixed target directly,
+# mirroring kokkos_ep_add_test's body plus the ON flags/definitions.
+function(kokkos_ep_add_eft_test_contract_on name)
+  set(tgt ${name}_contract_on)
+  add_executable(${tgt} ${name}.cpp)
+  target_include_directories(${tgt} PRIVATE ${THIRD_PARTY_INCLUDE})
+  target_link_libraries(${tgt} PRIVATE Kokkos::kokkos)
+  if(KOKKOS_EP_QUADMATH_DEFINE)
+    target_compile_definitions(${tgt} PRIVATE ${KOKKOS_EP_QUADMATH_DEFINE})
+  endif()
+  add_test(NAME ${tgt} COMMAND ${tgt})
+  set_tests_properties(${tgt} PROPERTIES SKIP_RETURN_CODE 77)
+
+  # Force contraction ON (the mirror image of kokkos_ep_add_eft_test).
+  # GCC/Clang: -ffp-contract=fast is the portable spelling both accept (GCC also
+  # accepts =on, but =fast is the one clang honors identically, so we use =fast for
+  # both). This permits — does not force — the compiler to fuse mul-then-add; on a
+  # non-FMA ISA target GCC still emits mul+sub, which is exactly the "belt+
+  # suspenders" outcome the ON reporter records.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${tgt} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=fast>)
+  endif()
+  # Intel: -fp-model=fast enables contraction/reassociation.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM|Intel")
+    target_compile_options(${tgt} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fp-model=fast>)
+  endif()
+  # CUDA: --fmad=true is nvcc's DEFAULT; stated explicitly for clarity/symmetry.
+  if(Kokkos_ENABLE_CUDA)
+    target_compile_options(${tgt} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=true>)
+  endif()
+
+  # Contraction-ON mode (report, don't gate) + baseline path for drift detection.
+  target_compile_definitions(${tgt} PRIVATE
+    KOKKOS_EP_CONTRACTION_MODE=1
+    KOKKOS_EP_BASELINE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/dd_fma_guard_baseline.txt")
 endfunction()
 
 # --- Registered tests -----------------------------------------------------
 kokkos_ep_add_test(hello_test)
 kokkos_ep_add_test(corpus_test)
 kokkos_ep_add_eft_test(dd_eft_test)
+# T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
+kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)
