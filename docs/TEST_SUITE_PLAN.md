@@ -628,7 +628,7 @@ test is doing its job — it flags three REAL `dd_math.hpp` accuracy defects and
 fails on them. The red is the point; it is the durable regression gate for the
 follow-up bug tasks B1/B2/B3 below.
 
-- Executed 2026-08-01. Commit `<impl-hash>`.
+- Executed 2026-08-01. Commit `f6dbbd2`.
 - **`tests/dd_accuracy_test.cpp` (new, ~760 lines).** Layer-4 per-op differential
   accuracy vs the `__float128` oracle: 10⁶ random + corpus per op, each element
   scored in digits = −log₁₀(rel_err) capped at 31 (u² = 2⁻¹⁰⁶), mean-gated at
