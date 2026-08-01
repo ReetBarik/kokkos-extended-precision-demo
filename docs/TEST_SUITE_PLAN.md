@@ -502,7 +502,7 @@ NOTICE for dual-license posture. (DONE)**
 
 **T1.5: FMA-contraction guard for DD. (DONE)**
 
-- Executed 2026-08-01. Commit `PENDING`.
+- Executed 2026-08-01. Commit `863f997`.
 - **`tests/dd_fma_guard_test.cpp` (new, ~340 lines).** Layer-5 positive test of
   the FMA-contraction posture T1.1 adopts defensively. Builds the identical Dekker
   `twoProduct` (mirrored from dd_math.hpp:197-211 / `two_prod` 270-278, copied
