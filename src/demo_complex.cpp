@@ -8,9 +8,14 @@
 
 // Host __float128 oracle via Kokkos's quadmath overloads (namespace Kokkos).
 // This header transitively includes <quadmath.h> when Kokkos was built with
-// Kokkos_ENABLE_LIBQUADMATH=ON, which is also where the complex __complex128
-// oracle functions (cexpq, csqrtq, …) come from — they have no Kokkos wrapper.
+// Kokkos_ENABLE_LIBQUADMATH=ON.
 #include <impl/Kokkos_QuadPrecisionMath.hpp>
+// Complex __complex128 oracle overloads (namespace Kokkos). Kokkos has no
+// upstream __complex128 wrapper, so this repo carries a local extension header
+// (applied from patches/kokkos_complex_quad_math.hpp — see patches/README.md).
+// Each overload is a one-line forward to ::c<fn>q, so it is bit-exact by
+// construction; routing the oracle through Kokkos:: matches the real demo (T0.0).
+#include <impl/Kokkos_ComplexQuadPrecisionMath.hpp>
 
 #include <dd_math.hpp>
 #include <dd_complex.hpp>
@@ -221,31 +226,31 @@ void host_quadmath_reference(Op op,
       case Op::Sub:   res = za - zb;       break;
       case Op::Mul:   res = za * zb;       break;
       case Op::Div:   res = za / zb;       break;
-      case Op::Abs:   out_re[i]=cabsq(za); out_im[i]=0.0q; continue;
-      case Op::Conj:  res = conjq(za);     break;
-      case Op::Sqrt:  res = csqrtq(za);    break;
-      case Op::Exp:   res = cexpq(za);     break;
-      case Op::Log:   res = clogq(za);     break;
-      case Op::Log10: res = clog10q(za);   break;
-      case Op::Sin:   res = csinq(za);     break;
-      case Op::Cos:   res = ccosq(za);     break;
-      case Op::Tan:   res = ctanq(za);     break;
-      case Op::Asin:  res = casinq(za);    break;
-      case Op::Acos:  res = cacosq(za);    break;
-      case Op::Atan:  res = catanq(za);    break;
-      case Op::Sinh:  res = csinhq(za);    break;
-      case Op::Cosh:  res = ccoshq(za);    break;
-      case Op::Tanh:  res = ctanhq(za);    break;
-      case Op::Asinh: res = casinhq(za);   break;
-      case Op::Acosh: res = cacoshq(za);   break;
-      case Op::Atanh: res = catanhq(za);   break;
-      case Op::Pow:   res = cpowq(za,zb);  break;
+      case Op::Abs:   out_re[i]=Kokkos::abs(za); out_im[i]=0.0q; continue;
+      case Op::Conj:  res = Kokkos::conj(za);    break;
+      case Op::Sqrt:  res = Kokkos::sqrt(za);    break;
+      case Op::Exp:   res = Kokkos::exp(za);     break;
+      case Op::Log:   res = Kokkos::log(za);     break;
+      case Op::Log10: res = Kokkos::log10(za);   break;
+      case Op::Sin:   res = Kokkos::sin(za);     break;
+      case Op::Cos:   res = Kokkos::cos(za);     break;
+      case Op::Tan:   res = Kokkos::tan(za);     break;
+      case Op::Asin:  res = Kokkos::asin(za);    break;
+      case Op::Acos:  res = Kokkos::acos(za);    break;
+      case Op::Atan:  res = Kokkos::atan(za);    break;
+      case Op::Sinh:  res = Kokkos::sinh(za);    break;
+      case Op::Cosh:  res = Kokkos::cosh(za);    break;
+      case Op::Tanh:  res = Kokkos::tanh(za);    break;
+      case Op::Asinh: res = Kokkos::asinh(za);   break;
+      case Op::Acosh: res = Kokkos::acosh(za);   break;
+      case Op::Atanh: res = Kokkos::atanh(za);   break;
+      case Op::Pow:   res = Kokkos::pow(za,zb);  break;
       case Op::Polar: {
         __float128 r=(__float128)ha_re[i], th=(__float128)ha_im[i];
         out_re[i]=r*Kokkos::cos(th); out_im[i]=r*Kokkos::sin(th); continue;
       }
     }
-    out_re[i]=crealq(res); out_im[i]=cimagq(res);
+    out_re[i]=Kokkos::real(res); out_im[i]=Kokkos::imag(res);
   }
 }
 

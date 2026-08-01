@@ -68,6 +68,32 @@ isinf, isnan, signbit`.
 MPFR is an optional secondary oracle behind a CMake flag; do not couple
 default builds to it.
 
+#### Complex oracle (T0.3)
+
+Kokkos ships **no** `__complex128` wrapper upstream — `Kokkos_QuadPrecisionMath.hpp`
+covers only real `__float128`. The complex demo (`src/demo_complex.cpp`) needs a
+`__complex128` oracle (`cexpq`, `csqrtq`, `csinq`, …).
+
+To keep the complex oracle plumbing symmetric with the real one (T0.0), this repo
+carries a **local extension header**,
+`impl/Kokkos_ComplexQuadPrecisionMath.hpp`, that adds `__complex128` overloads in
+`namespace Kokkos` (`Kokkos::exp`, `Kokkos::sqrt`, `Kokkos::conj`, `Kokkos::real`,
+…). It is applied to Reet's local Kokkos install (dropped into the Kokkos source
+tree's `core/src/impl/` before build/install).
+
+- A repo-side copy lives at `patches/kokkos_complex_quad_math.hpp` with a
+  `patches/README.md` explaining what it is, that it is **not upstream**, how to
+  apply it, and which Kokkos version it was tested against (5.1.0, LIBQUADMATH ON).
+- Each overload is a **one-line forward** to the corresponding `::c<fn>q`
+  function, so the wrapper is **bit-exact against `::c<fn>q` by construction**.
+  Verified by `scripts/smoke_kokkos_complex_quad.cpp` (compares `Kokkos::exp`
+  against `::cexpq` bit-for-bit).
+- `CMakeLists.txt` probes the Kokkos install for this header
+  (`check_cxx_source_compiles`) and warns-and-continues if absent — the same
+  graceful-degradation posture used for LIBQUADMATH itself. Only
+  `kokkos_ep_demo_complex` depends on it.
+- Kept local (not sent upstream) until the test suite stabilizes (Reet's call).
+
 ### Test framework
 
 Recommend CTest + a lightweight header (or GoogleTest if you don't mind
@@ -230,6 +256,42 @@ within a phase after the first task lands.
   has expected sizes/coverage.
 - Independent of T0.1 if API is agreed up front — treat T0.1 and T0.2
   as parallelizable after their APIs are locked in a short design note.
+
+**T0.3: Add local Kokkos `__complex128` wrapper; route complex oracle
+through Kokkos. (DONE)**
+
+- Executed 2026-08-01. Commit `0b11585`.
+- **A — header + install.** Wrote
+  `impl/Kokkos_ComplexQuadPrecisionMath.hpp` (21 `__complex128` overloads in
+  `namespace Kokkos`: `abs, real, imag, conj, exp, log, log10, pow, sqrt, sin,
+  cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh`), mirroring
+  `Kokkos_QuadPrecisionMath.hpp` (SPDX header, include guards,
+  `KOKKOS_ENABLE_LIBQUADMATH` gate, `#error` on missing `__float128`). Each
+  overload is a one-line forward to `::c<fn>q`. `arg`/`cargq` omitted (demo does
+  not use it). Repo-side copy saved to `patches/kokkos_complex_quad_math.hpp` +
+  `patches/README.md`. Dropped into the local Kokkos 5.1.0 source tree and
+  reinstalled; confirmed present at
+  `<prefix>/include/impl/Kokkos_ComplexQuadPrecisionMath.hpp` (install's
+  `FILES_MATCHING PATTERN "*.hpp"` picks it up automatically — no build-system
+  change needed). Smoke test `scripts/smoke_kokkos_complex_quad.cpp` compiles,
+  runs, and confirms `Kokkos::exp` is bit-exact against `::cexpq`.
+- **B — demo migration.** `src/demo_complex.cpp` now includes
+  `impl/Kokkos_ComplexQuadPrecisionMath.hpp` and routes all 21 oracle calls
+  through `Kokkos::<fn>((__complex128)…)` (`cabsq→Kokkos::abs`,
+  `conjq→Kokkos::conj`, `csqrtq→Kokkos::sqrt`, `cexpq→Kokkos::exp`,
+  `clogq→Kokkos::log`, `clog10q→Kokkos::log10`, `csinq/ccosq/ctanq→sin/cos/tan`,
+  `casinq/cacosq/catanq→asin/acos/atan`, `csinhq/ccoshq/ctanhq→sinh/cosh/tanh`,
+  `casinhq/cacoshq/catanhq→asinh/acosh/atanh`, `cpowq→Kokkos::pow`,
+  `crealq/cimagq→Kokkos::real/imag`). No DD-side arithmetic changed.
+  `CMakeLists.txt` probes the install for the wrapper via
+  `check_cxx_source_compiles` (linking `Kokkos::kokkos` so libquadmath resolves)
+  and warns-and-continues if absent, pointing at `patches/README.md`. Only
+  `kokkos_ep_demo_complex` is affected; `kokkos_ep_demo` (real) builds unchanged.
+- **Regression gate.** BEFORE (`HEAD~1`) vs AFTER accuracy-columns-only diff of
+  `kokkos_ep_demo_complex --batch 500000 --repeats 5 --seed 12345` is **empty**
+  — behavior byte-identical, as required (rule 7).
+- Bit-exactness is by construction (one-line forwards), so the refactor cannot
+  change oracle values.
 
 ### Phase 1 — DD validation (6 tasks)
 
@@ -545,3 +607,10 @@ else parallel.
 - README updated: three portable extended-precision backends
   (DD ~32 digits, QF ~29 digits, FF ~14 digits) benchmarked side-by-
   side against FP64 baseline, accuracy validated to published bounds.
+- **Complex oracle dependency (T0.3).** The complex demos' `__complex128`
+  oracle depends on the local Kokkos extension header
+  `impl/Kokkos_ComplexQuadPrecisionMath.hpp`, which is **not upstream in
+  Kokkos**. Future contributors must apply `patches/kokkos_complex_quad_math.hpp`
+  per `patches/README.md` and rebuild Kokkos with
+  `-DKokkos_ENABLE_LIBQUADMATH=ON` before building the complex demos; otherwise
+  CMake warns and the complex-oracle compile fails.

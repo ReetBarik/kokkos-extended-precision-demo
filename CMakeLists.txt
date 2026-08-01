@@ -35,6 +35,43 @@ else()
     "-DKokkos_ENABLE_LIBQUADMATH=ON.")
 endif()
 
+# The complex __complex128 oracle in src/demo_complex.cpp routes through a LOCAL
+# Kokkos extension header, impl/Kokkos_ComplexQuadPrecisionMath.hpp, which is NOT
+# upstream in Kokkos (see patches/README.md). Probe the Kokkos install for it and,
+# if absent, warn and continue — same graceful-degradation posture used above for
+# LIBQUADMATH itself. Only kokkos_ep_demo_complex depends on this header.
+if("LIBQUADMATH" IN_LIST Kokkos_TPLS)
+  include(CheckCXXSourceCompiles)
+  get_target_property(_kokkos_inc Kokkos::kokkos INTERFACE_INCLUDE_DIRECTORIES)
+  set(CMAKE_REQUIRED_INCLUDES ${_kokkos_inc})
+  set(CMAKE_REQUIRED_FLAGS "-fext-numeric-literals")
+  # Link against Kokkos so libquadmath (the ::c<fn>q symbols the wrapper forwards
+  # to) resolves, exactly as kokkos_ep_demo_complex does. Without this the probe
+  # compiles but fails to link (undefined reference to cexpq), a false negative.
+  set(CMAKE_REQUIRED_LIBRARIES Kokkos::kokkos)
+  check_cxx_source_compiles("
+    #include <impl/Kokkos_ComplexQuadPrecisionMath.hpp>
+    int main() {
+      __complex128 z; __real__ z = 1.0Q; __imag__ z = 2.0Q;
+      __complex128 w = Kokkos::exp(z);
+      return (int)Kokkos::real(w) * 0;
+    }" KOKKOS_HAS_COMPLEX_QUADMATH_WRAPPER)
+  unset(CMAKE_REQUIRED_INCLUDES)
+  unset(CMAKE_REQUIRED_FLAGS)
+  unset(CMAKE_REQUIRED_LIBRARIES)
+  if(KOKKOS_HAS_COMPLEX_QUADMATH_WRAPPER)
+    message(STATUS
+      "Kokkos install has impl/Kokkos_ComplexQuadPrecisionMath.hpp: "
+      "complex __complex128 oracle enabled")
+  else()
+    message(WARNING
+      "Kokkos install is MISSING impl/Kokkos_ComplexQuadPrecisionMath.hpp; "
+      "kokkos_ep_demo_complex will not compile its __complex128 oracle. This "
+      "header is a local extension carried in this repo — apply it per "
+      "patches/README.md, then rebuild Kokkos with -DKokkos_ENABLE_LIBQUADMATH=ON.")
+  endif()
+endif()
+
 set(THIRD_PARTY_INCLUDE "${CMAKE_SOURCE_DIR}/third_party/include")
 
 add_executable(kokkos_ep_demo src/demo_real.cpp)
