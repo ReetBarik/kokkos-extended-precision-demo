@@ -247,7 +247,7 @@ within a phase after the first task lands.
 
 **T0.4: Rename DD to `Kokkos::Experimental::DoubleDouble` for upstream-readiness. (DONE)**
 
-- Executed 2026-08-01. Commit `303514c`.
+- Executed 2026-08-01. Commit `49c87df`.
 - Pure refactor, no arithmetic changes. Done BEFORE T0.2 lands corpus code so the
   eventual Kokkos PR is a mechanical namespace move, not a rewrite. See the new
   "Upstreaming considerations" section under "Deliverable at end of Phase 3".
