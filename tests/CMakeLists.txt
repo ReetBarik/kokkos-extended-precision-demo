@@ -141,6 +141,10 @@ kokkos_ep_add_test(dd_invariant_test)
 # T1.3 property/identity tests: Group A bit-exact (no oracle), Group B/Test C use
 # the __float128 oracle. Plain helper — NOT an EFT test, so no contraction flags.
 kokkos_ep_add_test(dd_property_test)
+# T1.4 differential accuracy vs quadmath: per-op digits-of-accuracy against the
+# __float128 oracle. Quadmath-gated (runtime-SKIPs without LIBQUADMATH). Plain
+# helper — NOT an EFT test, so no contraction flags.
+kokkos_ep_add_test(dd_accuracy_test)
 # T1.6 end-to-end cancellation kernels: quadmath-oracle-gated, host-side. Plain
 # helper — NOT an EFT test, so no contraction flags (kernels are not EFT atoms).
 kokkos_ep_add_test(dd_e2e_test)
