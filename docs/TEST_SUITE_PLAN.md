@@ -290,7 +290,7 @@ within a phase after the first task lands.
 
 **T0.2: Corner-case corpus. (DONE)**
 
-- Executed 2026-08-01. Commit `120bc11`.
+- Executed 2026-08-01. Commit `5ffa52a`.
 - **`tests/corpus.hpp` (new).** Pure DATA + a tiny iteration API, downstream-only
   (NO SPDX header — never upstreamed, unlike `dd_math.hpp`). Precision-parametric
   on the scalar type (`double` for DD, `float` for FF/QF later; only these two).
