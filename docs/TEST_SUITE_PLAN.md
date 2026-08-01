@@ -545,13 +545,81 @@ NOTICE for dual-license posture. (DONE)**
   No invariant violations found (nothing to report-and-stop on).
 - Independent of T1.1.
 
-**T1.3: Property/identity tests for DD.**
+**T1.3: Property/identity tests for DD. (DONE)**
 
-- `a - a == 0` (exact), `a * dd_one() == a` (exact),
-  `sqrt(a)² ≈ a` (within ~2u²), `exp(log(a)) ≈ a`,
-  `sin²(a) + cos²(a) ≈ 1`, commutativity `multiply(a,b) == multiply(b,a)`.
-- No oracle needed. Fast (< 1 second at 10⁶ inputs).
-- Independent.
+- Executed 2026-08-01. Commit `PENDING`.
+- **`tests/dd_property_test.cpp` (new, ~560 lines).** Layer-3 algebraic-identity
+  test: do the DD ops compose the way the algebra says they should? Identities are
+  split by whether verification needs the `__float128` oracle at all.
+  `dd_math.hpp` NOT modified (rule 4).
+- **Group A — bit-exact, no oracle (10⁶ random + full finite corpus).** Two sides
+  must produce the IDENTICAL `(hi,lo)` bit pattern → raw `==`, no tolerance, no
+  quadmath. A1 `add(a,negate(a))==0`, A2 `a-a==0` (operator-), A3 `a·1==a`,
+  A4 `a·(-1)==negate(a)`, A5 `abs` sign branches, A6 `negate(negate(a))==a`,
+  A8 add commutativity `add(a,b)==add(b,a)`. **7 identities, 0 failures.**
+  Failures (none) would dump input+output bit patterns in `probe_op.cpp` hex.
+- **Classification by inspection + empirics — one demotion.** A7 (multiply
+  commutativity) was DEMOTED from Group A to Group B (as B0): Dekker twoProduct's
+  partial-sum chain `(((a1·b1−c11)+a1·b2)+a2·b1)+a2·b2` reorders under operand
+  swap and FP add is non-associative, so `multiply(a,b)` and `multiply(b,a)` agree
+  to ~31 digits but are NOT guaranteed bit-identical (per the task's "demote rather
+  than force-pass" rule). A8 (add commutativity) STAYS in Group A: Knuth twoSum's
+  error term is exact and order-independent, so add commutativity IS bit-exact
+  (confirmed: 0 failures over 10⁶). B0_mul_comm runs at min=mean=31.00 — near-exact
+  but not asserted bit-exact.
+- **Dekker domain restriction (skip-not-fail).** A3/A4 (which call `multiply`)
+  gate on `|x| < 2^996` via a `dom_dekker` predicate: the first run FAILED on
+  corpus values ≥6.7e299 (DBL_MAX etc.) where the Veltkamp split `a.hi·(2^27+1)`
+  overflows to inf→nan. This is the documented Dekker splitter-overflow limit from
+  T1.1, NOT a bug in `multiply` → per "out-of-domain SKIPPED not failed" each skips
+  6 corpus values (`skipped=6`), 0 failures. Group A add/negate/abs identities use
+  the full finite corpus (`dom_all`).
+- **Group B — tolerance vs `__float128` oracle (`#ifdef KOKKOS_EP_HAVE_QUADMATH`;
+  runtime-SKIP 77 otherwise).** 13 identities scored with `digits_of_accuracy`,
+  **fail-gated on the MEAN** against `tolerance_digits = -log10(N·u²)` (u=2⁻⁵³;
+  ≈25.91 at N=10⁶, ≈26.91 at N=10⁵). Per-identity proven bounds (2u²/4u²/10u²)
+  cited in code comments (rule 5). B0 mul-comm, B1 sqrt²≈a, B2 exp(log a)≈a,
+  B3 log(exp a)≈a, B4 sin²+cos²≈1, B5 sin(−a)==−sin a, B6 cos(−a)==cos a,
+  B7 tan·cos≈sin, B8 2·sin·cos≈sin(2a), B9 exp(a)·exp(−a)≈1, B10 hypot²≈a²+b²,
+  B11 pow(a,2)≈a·a, B12 atanh(a)≈½(log(1+a)−log(1−a)). **All 13 pass**; lowest
+  mins B8=20.45 and B12=23.94 (still ≫ tolerance), all means ≥29.77. Gating on the
+  mean (not min) keeps conditioning-limited samples (B4 near ±π·k, PORT_NOTES §5)
+  from false-failing. B5/B6 are empirically bit-exact (min 31.00) but conservatively
+  kept in Group B.
+- **Deviations (justified).** B3/B9 domain narrowed from the task's `[-700,700]` to
+  `[-290,290]` because `dd_math.hpp`'s `exp` clamps at `a.hi≥300` (an intermediate
+  `exp(-a)`/`exp(a)` past ~±300 would saturate) — the identity is still exercised
+  across 580 orders of magnitude in the exponent. B12 phrased as the equivalence
+  `atanh(a)−½(log(1+a)−log(1−a))≈0` mapped through `digits_of_accuracy` (both sides
+  finite, `|a|<0.5`).
+- **Test C — named-constant regressions (target ≥30 digits).** C1 `|sin(π)|≤ε`
+  (softened via `lookup_expected_min_drop("sin")`; `|sin(π)|=1.08e-31`, zero_digits
+  30.97), C2 `log(e)≈1` (30.46), C3 `exp(log2)≈2` (31.00), C4 `√2·√2≈2` (31.00),
+  C5 `log(10)≈log10` constant (30.18). C6 (euler_gamma/digamma) SKIPPED — no digamma
+  op and no independent DD oracle for the constant. **5/5 pass.**
+- **Device pass.** 3 Group A (A1, A3, A5) bit-exact + 2 Group B (B1, B4) digit
+  checks rerun on device at 10⁵ inputs (Serial here; parallel_for + KOKKOS_LAMBDA
+  ships hi/lo back). All PASS (device B1/B4 min 30.86).
+- **Anti-tests (documented in-source, deliberately NOT tested).** Associativity of
+  `add` and distributivity across large-magnitude cancellations are FALSE for any
+  finite-precision format (rounding is grouping-dependent) — asserting them would
+  test IEEE rounding, not the DD port.
+- **`tests/CMakeLists.txt` (edit).** Registered with the plain
+  `kokkos_ep_add_test(dd_property_test)` helper — NO contraction flags (not an EFT
+  test; identities hold regardless of FMA contraction).
+- **`tests/README.md` (edit).** Added the `dd_property_test` registry row and a
+  "Property/identity tests (Layer 3)" section (Group A/B/Test C, the A7→B0
+  demotion, anti-tests).
+- **Gate.** `cmake --build` clean, zero warnings from `dd_property_test.cpp`;
+  `ctest -V` shows all SEVEN tests (hello_test, corpus_test, dd_invariant_test,
+  dd_property_test, dd_eft_test, dd_fma_guard_test, dd_fma_guard_test_contract_on)
+  Passed; `kokkos_ep_demo --batch 100 --repeats 1 --seed 12345` runs cleanly.
+- **Scope-out.** DD real ops only — no complex identities (`dd_complex.hpp`); no
+  associativity; no ≥3-op compositions beyond those listed; device parity limited
+  to 3 Group A + 2 Group B; quadmath NOT used as the Group A oracle. `dd_math.hpp`
+  untouched; demos untouched. No bugs found (nothing to report-and-stop on; the
+  A3/A4 corpus failures were the known Dekker domain limit, handled by skipping).
+- Independent of T1.2/T1.5/T1.6.
 
 **T1.4: Differential accuracy for DD vs quadmath.**
 

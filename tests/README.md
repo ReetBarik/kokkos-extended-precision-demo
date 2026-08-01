@@ -31,6 +31,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `corpus_test`     | T0.2         | Corner-case corpus (`corpus.hpp`) scaffolding         |
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
 | `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
+| `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 
@@ -241,6 +242,53 @@ outside an op's domain (NaN/inf/subnormal `hi`, or out-of-domain input) are
 **skipped, not failed**. Five ops (`add`, `multiply`, `sqrt`, `exp`, `sin`) also
 run a device pass. Registered with the plain `kokkos_ep_add_test` helper — no
 contraction flags (the invariant holds regardless of FMA contraction).
+
+## Property/identity tests (Layer 3)
+
+Layer 3 (`dd_property_test`, **T1.3**) checks **algebraic identities** the DD ops
+must satisfy — a form of correctness orthogonal to Layer 1 (are the EFTs exact?)
+and Layer 2 (are outputs well-formed?): *do the ops compose the way the algebra
+says they should?* Identities are split by whether verifying them needs an oracle
+at all.
+
+**Group A — bit-exact, no oracle.** Identities whose two sides must produce the
+*identical* `(hi, lo)` bit pattern, so the test is a raw `==` with no tolerance
+and no `__float128`. This group runs unconditionally (even on a quadmath-less
+Kokkos). Members: `add(a, negate(a)) == 0`, `a - a == 0`, `a·1 == a`,
+`a·(-1) == negate(a)`, `abs` sign branches, `negate(negate(a)) == a`, and **add
+commutativity** `add(a,b) == add(b,a)`. Add commutativity is bit-exact because
+Knuth twoSum's error term is order-independent, so it stays in Group A.
+
+**Group B — tolerance, needs the `__float128` oracle** (`#ifdef
+KOKKOS_EP_HAVE_QUADMATH`; runtime-SKIP otherwise). Round-trip and trig
+identities where both sides are correct but rounding makes them differ in the
+last place(s): `sqrt(a)²≈a`, `exp(log(a))≈a`, `log(exp(a))≈a`,
+`sin²+cos²≈1`, `sin(-a)==-sin(a)`, `cos(-a)==cos(a)`, `tan·cos≈sin`,
+`2·sin·cos≈sin(2a)`, `exp(a)·exp(-a)≈1`, `hypot²≈a²+b²`, `pow(a,2)≈a·a`,
+`atanh(a)≈½(log(1+a)−log(1−a))`, plus **multiply commutativity** — demoted here
+from Group A because Dekker twoProduct's partial-sum ordering reorders under
+operand swap (FP add is non-associative), so `multiply(a,b)` and `multiply(b,a)`
+agree to ~31 digits but are **not** guaranteed bit-identical. Each identity is
+scored with `digits_of_accuracy` and **fail-gates on the mean** against
+`tolerance_digits = -log10(N·u²)` (`u = 2⁻⁵³`); per-identity proven bounds
+(2u²/4u²/10u²) are cited in code comments (plan rule 5). Gating on the mean, not
+the min, keeps conditioning-limited samples (e.g. `sin²+cos²` near `±π·k`, which
+needs triple-float argument reduction) from false-failing.
+
+**Test C — named-constant regressions.** Spot-checks that named constants /
+transcendental round-trips hold to ≥30 digits: `|sin(π)|≈0` (softened via
+`lookup_expected_min_drop("sin")`), `log(e)≈1`, `exp(log2)≈2`, `√2·√2≈2`,
+`log(10)≈log10` constant. `euler_gamma`/digamma is **skipped** (no digamma op and
+no independent DD oracle for the constant in `dd_math.hpp`).
+
+**Device pass.** 3 Group A (`add_neg`, `mul_one`, `abs_branch`) + 2 Group B
+(`sqrt_sq`, `pythag`) rerun on device (10⁵ inputs).
+
+**Anti-tests (deliberately NOT tested, documented in the source).**
+Associativity of `add` and distributivity across large-magnitude cancellations
+are **false for any finite-precision format** (rounding is grouping-dependent) —
+asserting them would be testing IEEE rounding, not the DD port. Registered with
+the plain `kokkos_ep_add_test` helper (no contraction flags — not an EFT test).
 
 ## FMA-contraction guard (Layer 5)
 
