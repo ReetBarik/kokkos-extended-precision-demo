@@ -470,7 +470,7 @@ NOTICE for dual-license posture. (DONE)**
 
 **T1.2: Non-overlap invariant checks for DD. (DONE)**
 
-- Executed 2026-08-01. Commit `<pending>`.
+- Executed 2026-08-01. Commit `0786b65`.
 - **`tests/dd_invariant_test.cpp` (new, ~700 lines).** Layer-2 output-invariant
   test. For every DD op that returns a double-double it asserts the NON-OVERLAP
   invariant `fl(hi + lo) == hi` bit-exactly, evaluated in **raw FP64** (a single
