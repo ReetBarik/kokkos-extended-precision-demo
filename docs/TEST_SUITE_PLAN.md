@@ -621,16 +621,67 @@ NOTICE for dual-license posture. (DONE)**
   A3/A4 corpus failures were the known Dekker domain limit, handled by skipping).
 - Independent of T1.2/T1.5/T1.6.
 
-**T1.4: Differential accuracy for DD vs quadmath.**
+**T1.4: Differential accuracy for DD vs quadmath. (DONE, RED)**
 
-- For each op, measure `max(rel_err / u²)` where `u = 2⁻⁵³`, across 10⁶
-  random + corpus.
-- Compare against DDFUN or QD published bounds where applicable. Where
-  DDFUN-specific bounds are not in literature, cite observed max
-  empirically with a comment noting no proven bound is available.
-- Deliverable: table of `op | observed max u² | published bound | pass/fail`.
-- Report min AND mean digits; annotate conditioning-limited ops
-  (PORT_NOTES §5).
+`(DONE, RED)` is deliberate: the task shipped its deliverable (the test) and the
+test is doing its job — it flags three REAL `dd_math.hpp` accuracy defects and
+fails on them. The red is the point; it is the durable regression gate for the
+follow-up bug tasks B1/B2/B3 below.
+
+- Executed 2026-08-01. Commit `<impl-hash>`.
+- **`tests/dd_accuracy_test.cpp` (new, ~760 lines).** Layer-4 per-op differential
+  accuracy vs the `__float128` oracle: 10⁶ random + corpus per op, each element
+  scored in digits = −log₁₀(rel_err) capped at 31 (u² = 2⁻¹⁰⁶), mean-gated at
+  ~25.91 digits, with EXPECTED-MIN-DROP semantics for PORT_NOTES §5
+  conditioning-limited ops. Whole file `KOKKOS_EP_HAVE_QUADMATH`-guarded; SKIP
+  (77) without quadmath. Registered with the plain `kokkos_ep_add_test` helper
+  (not an EFT test). **`tests/CMakeLists.txt` / `tests/README.md` (edit).**
+- **Op inventory — same ~50-row set as T1.2, verbatim** (see the T1.2 DONE block
+  for the full enumeration; not duplicated here). By category:
+  - *unary* — abs, negate, sqrt, round_to_nearest_int, ceil, floor, round, trunc,
+    exp, exp2, exp10, expm1, log, log2, log10, log1p, sin, cos, tan, asin, acos,
+    atan, sinh, cosh, tanh, asinh, acosh, atanh, erf, erfc, tgamma
+  - *two-output* — sincos.cos, sincos.sin, sinhcosh.cosh, sinhcosh.sinh
+  - *binary* — add, subtract, multiply, divide, pow, atan2, hypot, fmod,
+    remainder, copysign, fmax, fmin, fdim
+  - *ternary* — fma
+  - *integer-scalar* — pow_int
+- **Two-pass shape.** Random pass uses the T1.2 domain predicates/ranges
+  verbatim; corpus pass uses the PORT_NOTES §3/§4 named accessors where they
+  exist (`exp_overflow`, `nint_half_integer`, `remainder_regression`,
+  `atanh_small`, `sinh_cosh_small`, `trig_near_pi`) with `unary<T>()` /
+  `binary<T>()` bundler fallback otherwise. ~50M random inputs scored (10⁶ × 50
+  ops) plus ~878 corpus/skip-filtered inputs across all ops (per-op corpus counts:
+  ~165 unary bundler / ~67 binary bundler / named-accessor sizes for the rest).
+- **Tolerance rationale.** `tolerance_digits = −log₁₀(N · u²)` with u² = 2⁻¹⁰⁶ and
+  N = 10⁶ → **25.91**. Same formula as T1.3 Group B. Single uniform tolerance +
+  the PORT_NOTES §5 registry only — **no per-op tolerance overrides** (that would
+  defeat the point of a differential-accuracy gate).
+- **Results — 47 PASS, 3 FAIL (real signals, not test artifacts).**
+  - The 47 passing ops land at **mean 29.4–31.0 digits**. EXPECTED-MIN-DROP
+    entries (mean cleared; sanctioned low min surfaced with its registry reason):
+    exp (output-denormal lo), sin/cos/tan (near ±π needs triple-float reduction),
+    asin/acos (derivative → ∞ near |a|=1), atanh (1/(1−a²) blows up near |a|=1).
+  - **tgamma — mean=14.56 / tol=25.91 FAIL.** Lanczos g=7 with FP64 coefficient
+    constants (`dd_math.hpp:729-738`: 676.5203681218851, …) caps the result at
+    ~15 digits regardless of the enclosing DD arithmetic. Logged as **B1** below.
+  - **erfc — mean=19.50 / tol=25.91 FAIL.** `erfc(z)=subtract(1, erf(z))`
+    (`dd_math.hpp:718-720`) is catastrophic cancellation as erf(z) → 1 (26.4
+    digits at x=3, 18.2 at x=5, 0 at x=8). Logged as **B2** below.
+  - **erf — mean=24.64 / tol=25.91 FAIL.** 30–31 digits for |z| ≤ 5, but the
+    large-|z| asymptotic branch (`dd_math.hpp:698-715`) collapses to ~5 digits at
+    x=8, dragging the uniform(−10,10) random-pass mean below tol. Logged as **B3**
+    below.
+  - The three failures were verified **library-side, not oracle-side**, by an
+    independent standalone probe (separate TU calling quadmath `erfq`/`erfcq`/
+    `tgammaq` directly) that reproduced the same digit counts; the same oracle
+    machinery scores 47 other ops at 29.4–31.0, so oracle and domains are sound.
+- **Rule 4 posture.** `dd_math.hpp` NOT modified. The three failures are real
+  defects and stay flagged RED in the shipped test until B1/B2/B3 land; the test
+  is the durable regression gate for those fixes. The failing ops are NOT
+  skipped/disabled/xfailed.
+- **Scope-out.** No `dd_complex.hpp`; no FF/QF; no MPFR; no new corpus categories;
+  no per-op tolerance overrides. Op inventory not re-derived (taken from T1.2).
 - Depends on T0.1, T0.2.
 
 **T1.5: FMA-contraction guard for DD. (DONE)**
@@ -749,6 +800,63 @@ NOTICE for dual-license posture. (DONE)**
   no contraction flags). **`tests/README.md` (edit).** Registry table row added.
 - **Scope-out.** No `dd_complex.hpp`, no FF/QF backends, no per-op differential
   accuracy (that is the T1.4 sibling). `dd_math.hpp` untouched; demos untouched.
+
+### Follow-up bug tasks (from T1.4)
+
+Three real `dd_math.hpp` accuracy defects surfaced by T1.4's `dd_accuracy_test`
+(RED on these ops). Each is a library-side fix (rule 4: T1.4 reported, did not
+patch). `dd_accuracy_test` is the durable acceptance gate — a fix is done when
+its op clears the 25.91-digit mean. Pick up in any order after Phase 2/3, not
+now; these are stubs, one screenful each.
+
+**B1: `tgamma` — Lanczos coefficients at DD precision.**
+
+- **Read first:** `dd_math.hpp:723-751` (tgamma), how `DoubleDouble_pi()` etc.
+  build DD constants via `from_bits(hi, lo)`; `tests/dd_accuracy_test.cpp` tgamma
+  row; this block.
+- **Root cause.** `tgamma` uses Lanczos g=7 with FP64 coefficient constants
+  (`dd_math.hpp:729-738`: `676.5203681218851`, …). Double-precision coefficients
+  cap the result at ~15 digits regardless of the enclosing DD arithmetic
+  (measured mean 14.56, min ~0 near poles).
+- **Fix options.** (a) Promote the Lanczos coefficients to DD-precision constants
+  — compute once to ~32 digits (mpmath / Boost) and hardcode as
+  `DoubleDouble::from_bits(hi, lo)` pairs, the way `DoubleDouble_pi()` is done;
+  keeps the already-validated Lanczos structure, smaller diff. (b) Switch
+  algorithms (Stirling asymptotic + reflection, matching QD's `qd_real.cc`).
+  **Preference: (a).**
+- **Background / deliverables.** New DD coefficient constants + tgamma rework in
+  `dd_math.hpp` (its own task/branch). Cite the coefficient source in comments.
+- **Acceptance gate.** `dd_accuracy_test` tgamma mean ≥ 25.91; full ctest green;
+  no other op regresses.
+- **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
+
+**B2: `erfc` — direct computation for large |z|.**
+
+- **Read first:** `dd_math.hpp:698-720` (erf asymptotic branch + erfc); Boost.Math
+  / DDFUN erfc reference for the cutoff; `tests/dd_accuracy_test.cpp` erfc row.
+- **Root cause.** `erfc(z) = subtract(DoubleDouble(1.0), erf(z))`
+  (`dd_math.hpp:718-720`) is catastrophic cancellation as erf(z) → 1 (26.4 digits
+  at x=3, 18.2 at x=5, 0 at x=8; mean 19.50).
+- **Fix.** Direct asymptotic/continued-fraction erfc for |z| above a threshold
+  (~0.5–1; Boost uses |z| > 0.5); fall back to `1 − erf(z)` only for small |z|
+  where erf is far from 1. Likely shares the asymptotic-region code path with B3.
+- **Acceptance gate.** `dd_accuracy_test` erfc mean ≥ 25.91; full ctest green; no
+  other op regresses.
+- **Scope-out.** erfc path only; cross-reference B3 for the shared branch.
+
+**B3: `erf` — asymptotic branch for |z| > ~8.**
+
+- **Read first:** `dd_math.hpp:669-716` (erf, both branches);
+  `tests/dd_accuracy_test.cpp` erf row; B2 (shared asymptotic-region concern).
+- **Root cause.** erf delivers 30–31 digits for |z| ≤ 5 but the large-|z|
+  asymptotic branch (`dd_math.hpp:698-715`) collapses to ~5 digits at x=8,
+  dragging the uniform(−10,10) random-pass mean to 24.64. The moderate-|z| Taylor
+  branch is fine; the fix is scoped to the large-|z| asymptotic branch.
+- **Fix.** Repair/replace the asymptotic expansion for |z| > ~8 (convergence /
+  term-ordering); likely a shared fix with B2's direct-erfc asymptotic path.
+- **Acceptance gate.** `dd_accuracy_test` erf mean ≥ 25.91; full ctest green; no
+  other op regresses.
+- **Scope-out.** erf large-|z| branch only; coordinate with B2.
 
 ### Phase 2 — FF validation (6 tasks)
 
