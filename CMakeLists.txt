@@ -84,3 +84,11 @@ target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos)
 
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex RUNTIME DESTINATION bin)
 
+# ---- Tests (T0.1: backend-parameterized harness) ----------------------------
+# THIRD_PARTY_INCLUDE (set above) is consumed by tests/CMakeLists.txt.
+option(KOKKOS_EP_BUILD_TESTS "Build the extended-precision test suite" ON)
+if(KOKKOS_EP_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
