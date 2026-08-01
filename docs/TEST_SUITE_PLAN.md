@@ -379,7 +379,7 @@ through Kokkos. (DONE)**
 **T0.5: License hygiene — correct DDFUN attribution; add repo LICENSE /
 NOTICE for dual-license posture. (DONE)**
 
-- Executed 2026-08-01. Commit `<hash>`.
+- Executed 2026-08-01. Commit `e1b4de0`.
 - **Problem fixed.** T0.4 had mechanically stamped Kokkos's
   `Apache-2.0 WITH LLVM-exception` SPDX onto `third_party/include/dd_math.hpp`
   and `dd_complex.hpp` to match Kokkos style. Those two files are C++/Kokkos
