@@ -704,7 +704,7 @@ NOTICE for dual-license posture. (DONE)**
 
 **T1.6: End-to-end cancellation kernels for DD. (DONE)**
 
-- Executed 2026-08-01. Commit `PENDING`.
+- Executed 2026-08-01. Commit `73d9f0a`.
 - **`tests/dd_e2e_test.cpp` (new, ~380 lines).** Layer-6 end-to-end test: four
   classic cancellation-hostile kernels evaluated in DD and scored in digits of
   accuracy against `__float128` / closed-form oracles, mean-gated at 28.0 digits.
