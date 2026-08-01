@@ -44,6 +44,11 @@
 
 #include <dd_math.hpp>
 
+// Corner-case corpus (T0.2). Included at file scope (outside namespace
+// kokkos_ep) because corpus.hpp declares its own namespace kokkos_ep::corpus;
+// the actual integration note lives at the extension point further down.
+#include "corpus.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -121,15 +126,17 @@ inline InputDist uniform(double lo, double hi) {
 }
 
 // ---------------------------------------------------------------------------
-// TODO(T0.2): corner-case corpus extension point.
-//   T0.2 will add a host-side corpus generator (subnormals, +/-0, +/-inf, NaN,
-//   powers of two, nextafter neighbors, near-cancellation pairs, huge/tiny
-//   mixes, half-integer boundaries, plus the explicit PORT_NOTES regression
-//   corpus) as tests/corpus.hpp. The intended integration point here is a
-//   generator/accessor with the SAME InputDist-or-array shape the runners below
-//   already consume, so corpus inputs flow through run_unary_op / run_binary_op
-//   unchanged. Do NOT implement the corpus in this task — this comment marks
-//   where its API plugs in.
+// Corner-case corpus (T0.2). corpus.hpp provides deterministic corner-case
+// inputs (subnormals, +/-0, +/-inf, NaN, powers of two, nextafter neighbors,
+// near-cancellation pairs, huge/tiny mixes, half-integer boundaries) plus the
+// explicit PORT_NOTES §3/§4 regression accessors. It returns MATERIALIZED
+// vectors (std::vector<T> / std::vector<std::pair<T,T>>), not InputDist
+// generators, because corpus entries are fixed constants rather than random
+// draws. The random-pass runners above stay generator-driven; the corpus-pass
+// runners below (run_unary_op_on_corpus / run_binary_op_on_corpus) consume the
+// corpus vectors. A full accuracy test runs BOTH passes: random for breadth,
+// corpus for the pathological inputs uniform random misses.
+// (corpus.hpp is #included at the top of this file, at file scope.)
 // ---------------------------------------------------------------------------
 
 // ============================================================================
@@ -198,6 +205,56 @@ inline AccStats compute_stats(const double* digits, int n) {
 inline void print_stats(const char* label, const AccStats& s) {
   std::printf("  %-24s  n=%d  min=%.3f  mean=%.3f  median=%.3f  max=%.3f  (digits)\n",
               label, s.n, s.min, s.mean, s.median, s.max);
+}
+
+// ============================================================================
+// Expected-min-drop registry (PORT_NOTES §5 conditioning limits)
+// ============================================================================
+// Some ops legitimately show a low MIN digit count that is NOT a regression: the
+// operation is conditioning-limited and no fixed-precision algorithm can do
+// better (PORT_NOTES.md §5 on branch fffunKokkos). Tests fail-gate on the MEAN
+// column but must NOT fail on the min for these ops; instead they report
+// "expected-min-drop: OK". This registry lets a test ask, per op, whether a low
+// min is expected and how low is tolerable.
+//
+// A test's reporting logic should:
+//   const auto* ann = lookup_expected_min_drop(op_name);
+//   if (ann && stats.min >= ann->min_digits_allowed) -> "expected-min-drop: OK"
+//   else fail-gate on mean as usual.
+
+struct ExpectedMinDropAnnotation {
+  const char* op_name;
+  const char* reason;
+  double      min_digits_allowed;  // min may drop this low without being a regression
+};
+
+// Preloaded from PORT_NOTES §5. min_digits_allowed = 0.0 means "min may hit the
+// floor" (pure conditioning; e.g. exact cancellation, derivative -> inf). Chosen
+// as a static constexpr table + linear scan: the set is tiny and fixed at compile
+// time, so a table is simpler and allocation-free next to std::map, and it reads
+// as data rather than control flow next to an if/else chain.
+inline const ExpectedMinDropAnnotation* lookup_expected_min_drop(const char* op_name) {
+  static const ExpectedMinDropAnnotation kTable[] = {
+    {"sub",       "near-cancellation loses leading digits (matches FP64); PORT_NOTES §5", 0.0},
+    {"fdim",      "near-cancellation loses leading digits (matches FP64); PORT_NOTES §5", 0.0},
+    {"fma",       "near-cancellation loses leading digits (matches FP64); PORT_NOTES §5", 0.0},
+    {"asin",      "derivative 1/sqrt(1-a^2) -> inf near |a|=1; PORT_NOTES §5",            0.0},
+    {"acos",      "derivative 1/sqrt(1-a^2) -> inf near |a|=1; PORT_NOTES §5",            0.0},
+    {"atanh",     "1/(1-a^2) blows up near |a|=1; PORT_NOTES §5",                          0.0},
+    {"remainder", "a - b*nint(a/b) -> 0 with fixed abs error near multiples of b; PORT_NOTES §5", 0.0},
+    {"exp",       "output denormal range: lo falls into subnormal, loses bits; PORT_NOTES §5", 0.0},
+    {"sin",       "near +/-pi needs triple-float arg reduction (out of scope); PORT_NOTES §5", 0.0},
+    {"cos",       "near +/-pi needs triple-float arg reduction (out of scope); PORT_NOTES §5", 0.0},
+    {"tan",       "near +/-pi needs triple-float arg reduction (out of scope); PORT_NOTES §5", 0.0},
+  };
+  for (const auto& e : kTable) {
+    // std::strcmp without pulling <cstring> into every TU: compare inline.
+    const char* a = op_name;
+    const char* b = e.op_name;
+    while (*a && (*a == *b)) { ++a; ++b; }
+    if (*a == *b) return &e;  // both hit '\0' -> equal
+  }
+  return nullptr;
 }
 
 // ============================================================================
@@ -291,6 +348,99 @@ AccStats run_binary_op(int n, uint64_t seed,
 
   // 3. run op on device
   Kokkos::parallel_for("run_binary_op", Kokkos::RangePolicy<exec_space>(0, n),
+                       KOKKOS_LAMBDA(int i) { dout(i) = device_op(da(i), db(i)); });
+  Kokkos::fence();
+
+  // 4. results -> host
+  auto rmir = Kokkos::create_mirror_view(dout);
+  Kokkos::deep_copy(rmir, dout);
+
+  // 5. per-element accuracy
+  std::vector<double> digs(n);
+  for (int i = 0; i < n; ++i) {
+    float128 got = BackendTraits<Backend>::to_quad(rmir(i));
+    digs[i] = digits_of_accuracy<Backend>(got, href[i]);
+  }
+
+  // 6. stats
+  return compute_stats(digs.data(), n);
+}
+
+// --- Corpus-pass runners ---------------------------------------------------
+// Same host->device->host->oracle pipeline as run_unary_op/run_binary_op, but
+// driven by a caller-supplied deterministic input vector (from corpus.hpp)
+// instead of (seed, n) + generator. Tests call these for the corpus pass; the
+// generator-based runners above are unchanged for the random pass.
+
+template <typename Backend, typename DeviceOp>
+AccStats run_unary_op_on_corpus(
+    const std::vector<double>& inputs,
+    const std::function<float128(float128)>& host_oracle,
+    DeviceOp device_op) {
+  using T = typename BackendTraits<Backend>::type;
+  using exec_space = Kokkos::DefaultExecutionSpace;
+  using view_t     = Kokkos::View<T*, Kokkos::LayoutRight, exec_space>;
+
+  const int n = (int)inputs.size();
+  if (n <= 0) return AccStats{};
+
+  // 1. host oracle reference from the corpus inputs.
+  std::vector<float128> href(n);
+  for (int i = 0; i < n; ++i) href[i] = host_oracle((float128)inputs[i]);
+
+  // 2. inputs -> device
+  view_t din("din", n), dout("dout", n);
+  auto hmir = Kokkos::create_mirror_view(din);
+  for (int i = 0; i < n; ++i) hmir(i) = T(inputs[i]);
+  Kokkos::deep_copy(din, hmir);
+
+  // 3. run op on device
+  Kokkos::parallel_for("run_unary_op_on_corpus", Kokkos::RangePolicy<exec_space>(0, n),
+                       KOKKOS_LAMBDA(int i) { dout(i) = device_op(din(i)); });
+  Kokkos::fence();
+
+  // 4. results -> host
+  auto rmir = Kokkos::create_mirror_view(dout);
+  Kokkos::deep_copy(rmir, dout);
+
+  // 5. per-element accuracy
+  std::vector<double> digs(n);
+  for (int i = 0; i < n; ++i) {
+    float128 got = BackendTraits<Backend>::to_quad(rmir(i));
+    digs[i] = digits_of_accuracy<Backend>(got, href[i]);
+  }
+
+  // 6. stats
+  return compute_stats(digs.data(), n);
+}
+
+template <typename Backend, typename DeviceOp>
+AccStats run_binary_op_on_corpus(
+    const std::vector<std::pair<double, double>>& inputs,
+    const std::function<float128(float128, float128)>& host_oracle,
+    DeviceOp device_op) {
+  using T = typename BackendTraits<Backend>::type;
+  using exec_space = Kokkos::DefaultExecutionSpace;
+  using view_t     = Kokkos::View<T*, Kokkos::LayoutRight, exec_space>;
+
+  const int n = (int)inputs.size();
+  if (n <= 0) return AccStats{};
+
+  // 1. host oracle reference from the corpus pairs.
+  std::vector<float128> href(n);
+  for (int i = 0; i < n; ++i)
+    href[i] = host_oracle((float128)inputs[i].first, (float128)inputs[i].second);
+
+  // 2. inputs -> device
+  view_t da("da", n), db("db", n), dout("dout", n);
+  auto hma = Kokkos::create_mirror_view(da);
+  auto hmb = Kokkos::create_mirror_view(db);
+  for (int i = 0; i < n; ++i) { hma(i) = T(inputs[i].first); hmb(i) = T(inputs[i].second); }
+  Kokkos::deep_copy(da, hma);
+  Kokkos::deep_copy(db, hmb);
+
+  // 3. run op on device
+  Kokkos::parallel_for("run_binary_op_on_corpus", Kokkos::RangePolicy<exec_space>(0, n),
                        KOKKOS_LAMBDA(int i) { dout(i) = device_op(da(i), db(i)); });
   Kokkos::fence();
 

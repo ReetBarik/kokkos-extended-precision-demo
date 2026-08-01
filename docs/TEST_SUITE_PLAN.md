@@ -288,17 +288,57 @@ within a phase after the first task lands.
   both demos (`--batch 500000 --repeats 5 --seed 12345`) is **empty** —
   byte-identical behavior (rule 7). `ctest` (hello_test) still passes.
 
-**T0.2: Corner-case corpus.**
+**T0.2: Corner-case corpus. (DONE)**
 
-- Host-side generators for FP32 and FP64 arrays covering: subnormals,
-  ±0, ±inf, NaN, powers of two, `nextafter` neighbors,
-  near-cancellation pairs, huge/tiny mixes, half-integer boundaries.
-- Include the explicit PORT_NOTES regression corpus (see above).
-- Save as reproducible seeded arrays or on-demand generators.
-- Deliverable: `tests/corpus.hpp` + unit test showing corpus loads and
-  has expected sizes/coverage.
-- Independent of T0.1 if API is agreed up front — treat T0.1 and T0.2
-  as parallelizable after their APIs are locked in a short design note.
+- Executed 2026-08-01. Commit `120bc11`.
+- **`tests/corpus.hpp` (new).** Pure DATA + a tiny iteration API, downstream-only
+  (NO SPDX header — never upstreamed, unlike `dd_math.hpp`). Precision-parametric
+  on the scalar type (`double` for DD, `float` for FF/QF later; only these two).
+- **Return shape decision:** materialized `std::vector<T>` (unary) /
+  `std::vector<std::pair<T,T>>` (binary), NOT the `InputDist` generator-functor
+  shape. Rationale: corpus entries are deterministic constants (a specific
+  subnormal, the literal 88.72 that broke FF `exp`), so a vector the caller
+  iterates — one element == one deterministic test input — is the natural
+  representation; generator functors model random draws, of which there are none
+  here.
+- **Categories:** subnormals (min/mid/largest denormal), ±0, ±inf, quiet NaN
+  (opt-in), powers of two, `nextafter` neighbors (anchors 0/1/π/e/1e6/1e-6, ±2
+  ulp), near-cancellation pairs, huge/tiny mixes (ratios 1e6..1e30),
+  half-integer boundaries.
+- **Two API styles (both shipped):** bundlers `unary<T>(flags)` /
+  `binary<T>(flags)` (for T\*.2 invariant sweeps) and named accessors (for T\*.4
+  accuracy tests so failures cite a specific PORT_NOTES bug). `CorpusFlags`
+  (`include_nan=false`, `include_inf/zero/subnormals=true`) is authoritative over
+  the *whole* assembled bundle (incidental members from other categories are
+  filtered too).
+- **PORT_NOTES §4/§3 regression accessors (verbatim named entries):**
+  `exp_overflow` ({79.5,80,85,88.7,88.72}, §4a), `nint_half_integer`
+  (19.4999993 + k±0.5 neighbors for k∈{0,1,2,10,100,1000,19}, §4b),
+  `remainder_regression` ((68.379, 3.5066) + neighbors, §4b), `atanh_small`
+  (§3c), `sinh_cosh_small` (§3b), `trig_near_pi` (±π/±2π/±3π/±π/2 neighbors, §3a).
+  Category accessors (`subnormals`/`powers_of_two`/`nextafter_neighbors`/
+  `finite_specials`/`zeros`/`infinities`/`nans`/`near_cancellation`/`huge_tiny`)
+  are also individually callable.
+- **`tests/test_utils.hpp` (edit).** `TODO(T0.2)` block replaced with an
+  integration note; `#include "corpus.hpp"` added at file scope (corpus declares
+  its own `namespace kokkos_ep::corpus`). Added corpus-pass runners
+  `run_unary_op_on_corpus` / `run_binary_op_on_corpus` (same
+  host→device→host→oracle pipeline as the random runners, driven by a corpus
+  vector); the generator-based runners are unchanged for the random pass. Added
+  the PORT_NOTES §5 expected-min-drop registry: `ExpectedMinDropAnnotation` +
+  `lookup_expected_min_drop(op_name)`, preloaded with sub, fdim, fma, asin, acos,
+  atanh, remainder, exp, sin, cos, tan. **Registry decision:** static constexpr
+  table + linear scan — the set is tiny and fixed at compile time, so a table is
+  allocation-free and reads as data next to `std::map` / an if/else chain.
+- **`tests/corpus_test.cpp` (new).** Corpus-scaffolding smoke test (no DD op run,
+  no oracle touched → no LIBQUADMATH guard needed). Verifies bundlers non-empty,
+  flag behavior (inf/zero/subnormal present/absent per flag, NaN opt-in), the six
+  named regression accessors non-empty with spot-checked values (88.72,
+  19.4999993, (68.379,3.5066), |a|<0.5, near +π), and the registry
+  (sub/fdim/fma/asin/acos/atanh/remainder non-null; add null).
+  `kokkos_ep_add_test(corpus_test)` registered in `tests/CMakeLists.txt`.
+- **Gate:** `cmake --build` clean; `ctest -V` shows hello_test AND corpus_test
+  passing; `kokkos_ep_demo --batch 100` unchanged (no demo regression).
 
 **T0.3: Add local Kokkos `__complex128` wrapper; route complex oracle
 through Kokkos. (DONE)**

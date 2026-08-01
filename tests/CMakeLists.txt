@@ -47,3 +47,4 @@ endfunction()
 
 # --- Registered tests -----------------------------------------------------
 kokkos_ep_add_test(hello_test)
+kokkos_ep_add_test(corpus_test)
