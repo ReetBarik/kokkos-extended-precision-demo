@@ -141,6 +141,9 @@ kokkos_ep_add_test(dd_invariant_test)
 # T1.3 property/identity tests: Group A bit-exact (no oracle), Group B/Test C use
 # the __float128 oracle. Plain helper — NOT an EFT test, so no contraction flags.
 kokkos_ep_add_test(dd_property_test)
+# T1.6 end-to-end cancellation kernels: quadmath-oracle-gated, host-side. Plain
+# helper — NOT an EFT test, so no contraction flags (kernels are not EFT atoms).
+kokkos_ep_add_test(dd_e2e_test)
 kokkos_ep_add_eft_test(dd_eft_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)

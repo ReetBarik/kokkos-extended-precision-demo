@@ -32,6 +32,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
 | `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
+| `dd_e2e_test`     | T1.6         | End-to-end cancellation kernels: √(x²+1)−x, Σ1/k², Machin's π, alternating harmonic — all quadmath-oracle-gated |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 
