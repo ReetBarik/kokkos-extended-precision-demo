@@ -7,10 +7,10 @@
 // oracle comparison, pass/fail reporting) on the most trivial possible identity:
 //
 //   for 10^6 random FP64 inputs x:
-//     dd::ddouble(x) round-trips to quadmath as exactly x, i.e.
-//     BackendTraits<DD>::to_quad(dd::ddouble(x)) == (__float128)x
+//     dd::DoubleDouble(x) round-trips to quadmath as exactly x, i.e.
+//     BackendTraits<DD>::to_quad(dd::DoubleDouble(x)) == (__float128)x
 //
-// This holds by construction: dd::ddouble(x) stores {hi=x, lo=0}, and
+// This holds by construction: dd::DoubleDouble(x) stores {hi=x, lo=0}, and
 // to_quad = (float128)hi + (float128)lo = (float128)x exactly. So a passing run
 // proves the harness end-to-end WITHOUT depending on any DD op being correct.
 // Real DD correctness coverage begins in Phase 1 (T1.1..T1.6).
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     int mism = 0;
     for (int i = 0; i < n; ++i) {
       double   x    = dist(gen);
-      dd::ddouble x_dd(x);
+      dd::DoubleDouble x_dd(x);
       float128 back = BackendTraits<DD>::to_quad(x_dd);
       if (back != (float128)x) {
         if (mism < 5) {
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     AccStats st = run_unary_op<DD>(
         n, seed, uniform(-1e8, 1e8),
         [](float128 x) { return x; },                       // host oracle: identity
-        KOKKOS_LAMBDA(dd::ddouble x) { return x; });        // device op: identity
+        KOKKOS_LAMBDA(dd::DoubleDouble x) { return x; });        // device op: identity
     print_stats("run_unary_op identity", st);
     KOKKOS_EP_ASSERT(st.min >= (double)BackendTraits<DD>::max_digits,
                      "device-runner identity did not reach full digits");

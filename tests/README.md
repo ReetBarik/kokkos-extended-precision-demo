@@ -63,12 +63,12 @@ The harness is templated over a **backend tag** via `BackendTraits<Tag>`:
 
 | Tag  | Type            | Digits | Status                                  |
 |------|-----------------|--------|-----------------------------------------|
-| `DD` | `dd::ddouble`   | ~31    | supported (this branch)                 |
-| `FF` | `ff::ffloat`    | ~14    | Phase 2 — adds `BackendTraits<FF>`      |
-| `QF` | `qf::qfloat`    | ~29    | Phase 3 — adds `BackendTraits<QF>`      |
+| `DD` | `dd::DoubleDouble` | ~31 | supported (this branch)                 |
+| `FF` | `ff::FloatFloat`   | ~14 | Phase 2 — adds `BackendTraits<FF>`      |
+| `QF` | `qf::QuadFloat`    | ~29 | Phase 3 — adds `BackendTraits<QF>`      |
 
 `DD` etc. are empty tag types, **not** the arithmetic types. `BackendTraits<DD>`
-exposes `type` (`dd::ddouble`), `u_squared`, `max_digits`, `name()`, and
+exposes `type` (`dd::DoubleDouble`), `u_squared`, `max_digits`, `name()`, and
 `to_quad()`. A test written against `BackendTraits<Backend>` instantiates across
 backends with no source duplication; Phase 2/3 add the FF/QF specializations.
 

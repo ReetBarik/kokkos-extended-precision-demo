@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-namespace dd    = quad::ddfun;
+namespace dd    = Kokkos::Experimental;
 
 namespace {
 
@@ -340,11 +340,11 @@ static double element_digits(__float128 dev, __float128 ref, double max_digits) 
   return d < 0.0 ? 0.0 : (d > max_digits ? max_digits : d);
 }
 
-static __float128 dd_to_q(dd::ddouble x) {
+static __float128 dd_to_q(dd::DoubleDouble x) {
   return (__float128)x.hi + (__float128)x.lo;
 }
 
-AccStats compute_accuracy_dd(const __float128* ref, const dd::ddouble* dev, int n) {
+AccStats compute_accuracy_dd(const __float128* ref, const dd::DoubleDouble* dev, int n) {
   std::vector<double> digs((size_t)n);
   for (int i = 0; i < n; ++i)
     digs[i] = element_digits(dd_to_q(dev[i]), ref[i], kMaxDigits_dd);
@@ -388,7 +388,7 @@ struct OpResult {
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using vdd_t      = Kokkos::View<dd::ddouble*,    Kokkos::LayoutRight, exec_space>;
+using vdd_t      = Kokkos::View<dd::DoubleDouble*,    Kokkos::LayoutRight, exec_space>;
 using vdbl       = Kokkos::View<double*,          Kokkos::LayoutRight, exec_space>;
 
 OpResult run_op(Op op, const Config& cfg) {
@@ -409,9 +409,9 @@ OpResult run_op(Op op, const Config& cfg) {
     auto mad=Kokkos::create_mirror_view(ad), mbd=Kokkos::create_mirror_view(bd);
     auto mcd=Kokkos::create_mirror_view(cd);
     for (int i=0; i<n; ++i) {
-      madd(i) = dd::ddouble(ha[i]);
-      mbdd(i) = dd::ddouble(hb[i]);
-      mcdd(i) = dd::ddouble(hc[i]);
+      madd(i) = dd::DoubleDouble(ha[i]);
+      mbdd(i) = dd::DoubleDouble(hb[i]);
+      mcdd(i) = dd::DoubleDouble(hc[i]);
       mad(i)  = ha[i]; mbd(i) = hb[i]; mcd(i) = hc[i];
     }
     Kokkos::deep_copy(add,madd); Kokkos::deep_copy(bdd,mbdd); Kokkos::deep_copy(cdd,mcdd);

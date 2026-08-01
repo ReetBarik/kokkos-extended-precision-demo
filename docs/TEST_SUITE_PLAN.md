@@ -245,6 +245,49 @@ within a phase after the first task lands.
   (rename to `tests/reference_ffmul_pattern.cpp` — the pattern this
   harness generalizes).
 
+**T0.4: Rename DD to `Kokkos::Experimental::DoubleDouble` for upstream-readiness. (DONE)**
+
+- Executed 2026-08-01. Commit `303514c`.
+- Pure refactor, no arithmetic changes. Done BEFORE T0.2 lands corpus code so the
+  eventual Kokkos PR is a mechanical namespace move, not a rewrite. See the new
+  "Upstreaming considerations" section under "Deliverable at end of Phase 3".
+- **Namespace + type.** `namespace quad::ddfun` → `namespace Kokkos::Experimental`;
+  `struct ddouble` → `struct DoubleDouble`; `struct ddcomplex` →
+  `struct DoubleDoubleComplex` (bespoke struct, NOT `Kokkos::complex<DoubleDouble>`
+  yet — that integration is a separate future task).
+- **STL-style free functions.** `ddadd→add`, `ddsub→subtract`, `ddmul→multiply`,
+  `dddiv→divide` (all still reachable via operators); `ddmuld→multiply_scalar`,
+  `dddivd→divide_scalar` (internal helpers); `ddneg→negate`;
+  `ddnint→round_to_nearest_int`; `ddang→angle` (internal DDFUN atan2(y,x)
+  primitive; public `atan2(y,x)` wrapper unchanged); `powi→pow_int`;
+  `ddmuldd→two_prod`. Transcendentals already had STL names (exp/log/sin/…) and
+  did not rename. Internal `ddexpint→expint`, `ddincgamma→incgamma`.
+- **Constants.** `dd_pi()`→`DoubleDouble_pi()`, and likewise `DoubleDouble_e()`,
+  `DoubleDouble_log2()`, `DoubleDouble_log10()`, `DoubleDouble_sqrt2()`,
+  `DoubleDouble_euler_gamma()`. Chose the free-function form over a
+  `constants::pi<DoubleDouble>()` template: mirrors Kokkos's existing M_PI-style
+  accessors, reads shorter at the call site, and these are runtime-built from
+  IEEE-754 bit patterns so they cannot be constexpr template variables.
+- **Factory.** `make_dd(hi,lo)` → static `DoubleDouble::from_bits(hi,lo)`:
+  namespaced to the type, discoverable, no free-function symbol.
+- **ADL + `Kokkos::` re-exposure.** Every single/two-output math function is
+  ADL-findable (argument namespace is `Kokkos::Experimental`) AND re-exposed under
+  `namespace Kokkos` via one-line forwards at the bottom of each header, mirroring
+  `impl/Kokkos_QuadPrecisionMath.hpp`'s `__float128` overloads — so
+  `Kokkos::exp(dd)` works identically to `Kokkos::exp(double)` /
+  `Kokkos::exp(__float128)`. `add`/`subtract`/`multiply`/`divide` are NOT
+  re-exposed under `Kokkos` (operators + explicit ADL only).
+- **SPDX headers.** Kokkos SPDX + copyright header added to
+  `third_party/include/dd_math.hpp`, `dd_complex.hpp`; `patches/` copy already
+  had one (T0.3). Downstream files (demos, tests, harness, scripts) deliberately
+  left header-free.
+- **Callers.** Demos and tests use `namespace dd = Kokkos::Experimental;` alias
+  (ergonomic call-site sugar; short `dd::` names retained). `BackendTraits<DD>::type`
+  = `Kokkos::Experimental::DoubleDouble`.
+- **Regression gate.** BEFORE (`HEAD~1`) vs AFTER accuracy-columns-only diff of
+  both demos (`--batch 500000 --repeats 5 --seed 12345`) is **empty** —
+  byte-identical behavior (rule 7). `ctest` (hello_test) still passes.
+
 **T0.2: Corner-case corpus.**
 
 - Host-side generators for FP32 and FP64 arrays covering: subnormals,
@@ -297,12 +340,12 @@ through Kokkos. (DONE)**
 
 **T1.1: EFT unit tests for DD.**
 
-- Test `twoSum` (from `ddadd`) and Dekker `twoProd` (from `ddmul`) at
+- Test `twoSum` (from `add`) and Dekker `twoProd` (from `multiply`) at
   the primitive level. Extract or wrap the primitives cleanly for
   isolated testing.
 - Ground truth: quadmath. Assert `(hi + lo) == exact_sum` in quadmath.
 - 10⁶ random + full corpus.
-- Include the FMA-contraction issue: DD `ddmul` uses Dekker splitting
+- Include the FMA-contraction issue: DD `multiply` uses Dekker splitting
   with constant `134217729.0` (2²⁷+1), not `twoProdFMA`. Any
   compiler-driven fusion of `a.hi * b.hi - c11` into a single FMA
   breaks the EFT. Verify no fusion occurs in the compiled binary
@@ -312,7 +355,8 @@ through Kokkos. (DONE)**
 
 - For every op in `dd_math.hpp` (add/sub/mul/div/sqrt/exp/log/sin/cos/
   tan/asin/acos/atan/sinh/cosh/tanh/asinh/acosh/atanh/pow/exp2/exp10/
-  expm1/log2/log10/log1p/ddnint/powi/hypot/fmod/remainder/fma), run
+  expm1/log2/log10/log1p/round_to_nearest_int/pow_int/hypot/fmod/
+  remainder/fma), run
   10⁶ inputs + corpus and assert `fl(hi + lo) == hi` bit-exactly on
   outputs.
 - Report which op fails, with input bit patterns for the failing case
@@ -323,7 +367,7 @@ through Kokkos. (DONE)**
 
 - `a - a == 0` (exact), `a * dd_one() == a` (exact),
   `sqrt(a)² ≈ a` (within ~2u²), `exp(log(a)) ≈ a`,
-  `sin²(a) + cos²(a) ≈ 1`, commutativity `ddmul(a,b) == ddmul(b,a)`.
+  `sin²(a) + cos²(a) ≈ 1`, commutativity `multiply(a,b) == multiply(b,a)`.
 - No oracle needed. Fast (< 1 second at 10⁶ inputs).
 - Independent.
 
@@ -343,7 +387,7 @@ through Kokkos. (DONE)**
 
 - Compile T1.1 tests with `--fmad=false` (CUDA) and `-ffp-contract=off`
   (host); verify pass.
-- Then with contraction on, verify `ddmul`'s Dekker splitting sequence
+- Then with contraction on, verify `multiply`'s Dekker splitting sequence
   doesn't silently fold. Test-only; production build unchanged.
 - One-time infra + regression test.
 - Independent.
@@ -355,7 +399,7 @@ through Kokkos. (DONE)**
 - Σ 1/k² for k=1..N → π²/6 (with `N=10⁶` giving ~6 digits of the tail;
   compare DD sum's digit-count against quadmath sum).
 - Machin's formula for π (or Machin-like), evaluated in DD, digit
-  count vs `dd_pi()`.
+  count vs `DoubleDouble_pi()`.
 - Partial sums of alternating series known to lose digits in FP64.
 - Deliverable: ~150 lines, all pass at DD's expected ~31 digit
   precision.
@@ -435,19 +479,26 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 
 - Create branch `qffunKokkos` from `fffunKokkos` (inherits FF
   infrastructure).
+- Follow the T0.4 naming convention: type + math under
+  `namespace Kokkos::Experimental`, STL-style free-function names
+  (`add`/`subtract`/`multiply`/`divide`/`negate`/`round_to_nearest_int`/
+  `pow_int`), constants as `QuadFloat_pi()` etc., `QuadFloat::from_bits(...)`
+  factory, and a bottom-of-header `namespace Kokkos` re-exposure block so
+  `Kokkos::exp(qf)` works. FF gets the same treatment in T2.0.
 - Create `third_party/include/qf_math.hpp` with:
-  - `qfloat` struct: 4 × float components (f0, f1, f2, f3).
+  - `QuadFloat` struct: 4 × float components (f0, f1, f2, f3).
   - `renorm_4` (length-5 → length-4 Priest normalization; port from
     QD Hida-Li-Bailey Algorithm 3).
-  - `qfadd` (`sloppy_add` + optional `ieee_add`; both from QD).
-  - `qfsub`.
-  - `qfmul` (16 partial products, keep down to weight u³, `renorm_4`).
-  - `qfdiv` (Newton, 3 iterations from FP32 → ~96 bits).
-  - `qfsqrt` (Newton, 3 iterations).
-  - `qfneg`, `qfabs`.
-  - Constants (`qf_pi`, `qf_e`, `qf_log2`, `qf_log10`, `qf_sqrt2`,
-    `qf_euler_gamma`) — regenerate from MPFR or quadmath as 4 × FP32
-    bit patterns (extend `scripts/gen_ff_constants.cpp` pattern).
+  - `add` (QD's `sloppy_add` + optional `ieee_add`; both from QD).
+  - `subtract`.
+  - `multiply` (16 partial products, keep down to weight u³, `renorm_4`).
+  - `divide` (Newton, 3 iterations from FP32 → ~96 bits).
+  - `sqrt` (Newton, 3 iterations).
+  - `negate`, `abs`.
+  - Constants (`QuadFloat_pi`, `QuadFloat_e`, `QuadFloat_log2`,
+    `QuadFloat_log10`, `QuadFloat_sqrt2`, `QuadFloat_euler_gamma`) —
+    regenerate from MPFR or quadmath as 4 × FP32 bit patterns (extend
+    `scripts/gen_ff_constants.cpp` pattern).
 - Every function `KOKKOS_INLINE_FUNCTION`, same style as
   `dd_math.hpp` and `ff_math.hpp`.
 - **Preamble mandate: cluster-Claude must read `qd/src/qd_real.cc`
@@ -471,14 +522,16 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
     PORT_NOTES §3b).
   - `asinh`, `acosh`, `atanh` (Taylor branch for `|a| < 0.5` per
     PORT_NOTES §3c).
-  - `pow`, `powi`, `hypot`, `fmod`, `remainder`, `copysign`, `fmax`,
-    `fmin`, `fdim`, `fma`, `ceil`, `floor`, `round`, `trunc`, `qfnint`.
+  - `pow`, `pow_int`, `hypot`, `fmod`, `remainder`, `copysign`, `fmax`,
+    `fmin`, `fdim`, `fma`, `ceil`, `floor`, `round`, `trunc`,
+    `round_to_nearest_int`.
 - **Apply PORT_NOTES lessons proactively:**
-  - `qfnint`: don't use magic-constant trick with 2⁹⁵ — FP32 mantissa
-    won't absorb it. Convert to FP64 or FP128 for rounding, like FF's
+  - `round_to_nearest_int`: don't use magic-constant trick with 2⁹⁵ —
+    FP32 mantissa won't absorb it. Convert to FP64 or FP128 for
+    rounding, like FF's
     `ffnint` does.
   - `exp` scaling: use direct scaling for final `ldexp`, not
-    `qfmul(s, ldexpf(1, nz))` — splitter would overflow.
+    `multiply(s, ldexpf(1, nz))` — splitter would overflow.
 - Deliverable: `qf_math.hpp` complete, `demo_qf_real.cpp` and
   `demo_qf_complex.cpp` (adapted from FF equivalents) run and produce
   ~28-29 digits accuracy against quadmath.
@@ -593,6 +646,44 @@ else parallel.
   tasks in the plan).
 
 **Total: 23 tasks, ~3-4 focused weeks wall time.**
+
+## Upstreaming considerations
+
+The extended-precision types are being developed so that contributing them to
+Kokkos later is a mechanical extraction rather than a rewrite. Locked in by T0.4
+(DD) and inherited by FF (T2.0) and QF (T3.0):
+
+- **Namespace + type names.** Types and their math functions live under
+  `namespace Kokkos::Experimental` (`DoubleDouble`, and future `FloatFloat`,
+  `QuadFloat`; complex as `DoubleDoubleComplex`, etc.). This is exactly where an
+  upstream PR would place them, so the move is `git mv` + include-path fixups, not
+  a symbol rewrite.
+- **STL-style surface.** Arithmetic free functions use `add`/`subtract`/
+  `multiply`/`divide`/`negate` (plus operators); transcendentals already match
+  `<cmath>` (`exp`/`log`/`sin`/…); `round_to_nearest_int`, `pow_int`, `atan2`,
+  and `two_prod` replace the DDFUN-Fortran `dd*` spellings. Constants are
+  `DoubleDouble_pi()`-style free functions; bit-pattern construction is the
+  static factory `DoubleDouble::from_bits(hi, lo)`.
+- **ADL + `Kokkos::` re-exposure.** Every math function is ADL-findable via the
+  argument's namespace AND re-exposed under `namespace Kokkos` (one-line
+  forwards at the bottom of each header, mirroring
+  `impl/Kokkos_QuadPrecisionMath.hpp`). So `Kokkos::exp(dd)` works identically to
+  `Kokkos::exp(double)` / `Kokkos::exp(__float128)`. Arithmetic
+  (`add`/`subtract`/`multiply`/`divide`) is reached via operators + explicit ADL
+  only — deliberately NOT re-exposed as `Kokkos::add`.
+- **SPDX + copyright headers** on the future-upstream files
+  (`third_party/include/dd_math.hpp`, `dd_complex.hpp`, and the `patches/`
+  copy), using the exact header from `Kokkos_QuadPrecisionMath.hpp`, with the
+  "Ported from DDFUN (David H. Bailey)" attribution preserved as a second block
+  below the SPDX. Downstream-only files (demos, benchmarks, tests, this repo's
+  harness, scripts) are deliberately header-free.
+- **Test structure.** Test logic is written against `BackendTraits<Backend>` so
+  it could later drop into Kokkos's GoogleTest suite with minimal rewrite.
+  Free-form `printf` is confined to the harness itself (`test_utils.hpp`), not
+  the per-op test logic.
+- **PR scope when it happens:** types + math functions + unit tests only. The
+  demos, benchmarks, and this repo's CTest harness stay downstream. Opening a
+  Kokkos PR is a future decision, made only after the test suite proves value.
 
 ## Deliverable at end of Phase 3
 

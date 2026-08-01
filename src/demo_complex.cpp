@@ -34,7 +34,7 @@
 #include <string>
 #include <vector>
 
-namespace dd    = quad::ddfun;
+namespace dd    = Kokkos::Experimental;
 
 namespace {
 
@@ -297,11 +297,11 @@ static double element_digits(__float128 dev, __float128 ref, double max_digits) 
   return d<0.0?0.0:(d>max_digits?max_digits:d);
 }
 
-static __float128 dd_to_q(dd::ddouble x) {
+static __float128 dd_to_q(dd::DoubleDouble x) {
   return (__float128)x.hi + (__float128)x.lo;
 }
 
-AccStats compute_acc_dd(const dd::ddouble* dev, const __float128* ref, int n) {
+AccStats compute_acc_dd(const dd::DoubleDouble* dev, const __float128* ref, int n) {
   std::vector<double> digs((size_t)n);
   for (int i=0;i<n;++i) digs[i]=element_digits(dd_to_q(dev[i]),ref[i],kMaxDigits_dd);
   std::sort(digs.begin(),digs.end());
@@ -341,9 +341,9 @@ struct ComplexOpResult {
 
 using exec_space = Kokkos::DefaultExecutionSpace;
 using policy_1d  = Kokkos::RangePolicy<exec_space>;
-using vddc       = Kokkos::View<dd::ddcomplex*,              Kokkos::LayoutRight, exec_space>;
+using vddc       = Kokkos::View<dd::DoubleDoubleComplex*,              Kokkos::LayoutRight, exec_space>;
 using vdc        = Kokkos::View<Kokkos::complex<double>*,    Kokkos::LayoutRight, exec_space>;
-using vdd_t      = Kokkos::View<dd::ddouble*,                Kokkos::LayoutRight, exec_space>;
+using vdd_t      = Kokkos::View<dd::DoubleDouble*,                Kokkos::LayoutRight, exec_space>;
 
 ComplexOpResult run_op(Op op, const Config& cfg) {
   const int n = cfg.batch;
@@ -364,12 +364,12 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
     auto mda=Kokkos::create_mirror_view(da),  mdb=Kokkos::create_mirror_view(db);
     auto mddra=Kokkos::create_mirror_view(ddra),mddrb=Kokkos::create_mirror_view(ddrb);
     for (int i=0;i<n;++i) {
-      mdqa(i)=dd::ddcomplex(dd::ddouble(ha_re[i]),dd::ddouble(ha_im[i]));
-      mdqb(i)=dd::ddcomplex(dd::ddouble(hb_re[i]),dd::ddouble(hb_im[i]));
+      mdqa(i)=dd::DoubleDoubleComplex(dd::DoubleDouble(ha_re[i]),dd::DoubleDouble(ha_im[i]));
+      mdqb(i)=dd::DoubleDoubleComplex(dd::DoubleDouble(hb_re[i]),dd::DoubleDouble(hb_im[i]));
       mda(i)=Kokkos::complex<double>(ha_re[i],ha_im[i]);
       mdb(i)=Kokkos::complex<double>(hb_re[i],hb_im[i]);
-      mddra(i)=dd::ddouble(ha_re[i]);
-      mddrb(i)=dd::ddouble(ha_im[i]);
+      mddra(i)=dd::DoubleDouble(ha_re[i]);
+      mddrb(i)=dd::DoubleDouble(ha_im[i]);
     }
     Kokkos::deep_copy(dqa,mdqa); Kokkos::deep_copy(dqb,mdqb);
     Kokkos::deep_copy(da,mda);   Kokkos::deep_copy(db,mdb);
@@ -391,7 +391,7 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
       st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_div",pol,KOKKOS_LAMBDA(int i){dqr(i)=dqa(i)/dqb(i);});}); break;
     case Op::Abs:
       st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_abs",pol,KOKKOS_LAMBDA(int i){
-        dqr(i)=dd::ddcomplex(dd::abs(dqa(i)),dd::ddouble(0.0));});}); break;
+        dqr(i)=dd::DoubleDoubleComplex(dd::abs(dqa(i)),dd::DoubleDouble(0.0));});}); break;
     case Op::Conj:
       st_dd=time_kernel_fence(cfg.repeats,[&](){Kokkos::parallel_for("dc_conj",pol,KOKKOS_LAMBDA(int i){dqr(i)=dd::conj(dqa(i));});}); break;
     case Op::Sqrt:
@@ -490,7 +490,7 @@ ComplexOpResult run_op(Op op, const Config& cfg) {
   // ---- Download and compute accuracy ----------------------------------------
   auto mdqr=Kokkos::create_mirror_view(dqr); Kokkos::deep_copy(mdqr,dqr);
 
-  std::vector<dd::ddouble>    dd_re_v(n),    dd_im_v(n);
+  std::vector<dd::DoubleDouble>    dd_re_v(n),    dd_im_v(n);
   for (int i=0;i<n;++i) {
     dd_re_v[i]=mdqr(i).real(); dd_im_v[i]=mdqr(i).imag();
   }

@@ -68,7 +68,7 @@ using float128 = __float128;
 // Tag types (NOT the arithmetic types). A test file instantiates its logic on a
 // tag; BackendTraits<Tag> maps the tag to the concrete type + metadata.
 
-namespace dd = quad::ddfun;
+namespace dd = Kokkos::Experimental;
 
 struct DD {};  // double-double (2 x FP64)
 // TODO(Phase 2): struct FF {};  // float-float (2 x FP32), backend on fffunKokkos
@@ -79,7 +79,7 @@ struct BackendTraits;  // primary template intentionally undefined
 
 template <>
 struct BackendTraits<DD> {
-  using type = dd::ddouble;
+  using type = dd::DoubleDouble;
 
   // u = 2^-53 (FP64 unit roundoff); DD carries ~2u^2 worth of tail, so the
   // relevant scale for double-word error bounds is u^2 = 2^-106.
