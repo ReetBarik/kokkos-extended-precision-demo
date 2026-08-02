@@ -13,7 +13,8 @@ Demonstrates two extended-precision backends running side by side inside Kokkos 
 | Backend | Type | Precision | Requirement |
 |---|---|---|---|
 | **CUDA Emulated FP128** | `quad::cuda_fp128::fp128_t` | ~33 decimal digits | compute ≥ 10.0 (sm_100, Blackwell) |
-| **Kokkos DD (double-double)** | `quad::ddfun::ddouble` | ~30–31 decimal digits | Kokkos only — any execution space |
+| **Kokkos DD (double-double)** | `Kokkos::Experimental::DoubleDouble` | ~30–31 decimal digits | Kokkos only — any execution space |
+| **Kokkos FF (float-float)** | `Kokkos::Experimental::FloatFloat` | ~14 decimal digits | Kokkos only — any execution space |
 
 Each operation is run on both backends and on FP64. The output table shows **slowdown vs FP64** (min / max / median / mean across N timed repeats) and **accuracy in decimal digits** for FP128 and DD side by side.
 
@@ -34,6 +35,12 @@ Runs all 39 real math operations on FP128, DD, and FP64. Reports:
 
 ### `kokkos_ep_demo_complex` — complex ops
 Runs all 24 complex math operations on FP128, DD, and FP64. Each op prints two rows (real part, imag part); slowdown is shown only on the first row.
+
+### `kokkos_ep_demo_ff` — FF real ops
+Runs all 39 real math operations on Kokkos FF (float-float, `Kokkos::Experimental::FloatFloat`) and FP64, scoring FF against the `__float128` quadmath oracle (max 14.0 digits). Portable to any Kokkos execution space — FF is a mechanical DD→FF (2×FP64 → 2×FP32) translation of the DDFUN port; see `PORT_NOTES.md` for the FP32-specific fixes.
+
+### `kokkos_ep_demo_ff_complex` — FF complex ops
+Runs all 24 complex math operations on Kokkos FF (`Kokkos::Experimental::FloatFloatComplex`) and FP64. Same two-rows-per-op (real / imag) layout as the DD complex demo.
 
 ## Dependencies
 
@@ -76,6 +83,13 @@ This outputs `build/kokkos_ep_demo` and `build/kokkos_ep_demo_complex`.
 # Convenience scripts
 ./scripts/run_all_ops.sh --batch 500000
 ./scripts/run_all_complex_ops.sh --batch 500000
+
+# FF (float-float) demos — portable, ~14 digits vs FP64 baseline
+./build/kokkos_ep_demo_ff --batch 500000 --repeats 5
+./build/kokkos_ep_demo_ff --op sin --batch 1000000 --repeats 5
+./build/kokkos_ep_demo_ff_complex --batch 500000 --repeats 5
+./scripts/run_all_ff_ops.sh --batch 500000
+./scripts/run_all_ff_complex_ops.sh --batch 500000
 ```
 
 Arguments: `--op <name>`, `--batch N` (default: 1,000,000), `--repeats N` (default: 5), `--seed N` (default: 12345).

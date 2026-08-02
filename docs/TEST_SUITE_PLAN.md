@@ -1196,6 +1196,7 @@ term. (The DDFUN website also asks commercial users to contact the author at
 | File(s) | License |
 |---|---|
 | `third_party/include/dd_math.hpp`, `dd_complex.hpp` | DHB-License (`LICENSES/LicenseRef-DHB-License.txt`) |
+| `third_party/include/ff_math.hpp`, `ff_complex.hpp` | DHB-License (`LICENSES/LicenseRef-DHB-License.txt`) — DD→FF mechanical translation (T2.0) |
 | `patches/kokkos_complex_quad_math.hpp` | Apache-2.0 WITH LLVM-exception |
 | Everything else (demos, tests, harness, corpus, scripts, docs) | Apache-2.0 (`LICENSE`) |
 
@@ -1215,8 +1216,13 @@ These are distinct licenses with distinct copyright holders and contacts; the
 correct header must be applied per source tree, not assumed uniform. Action
 items:
 
-- [ ] **T2.0 kickoff:** verify FF port lineage (DDFUN vs QD) and apply the
-      correct license header before merging `fffunKokkos` into `main`.
+- [x] **T2.0 kickoff:** FF port lineage verified — `ff_math.hpp` line 3 states
+      "Mechanically ported from dd_math.hpp (DDFUN by David H. Bailey)", i.e. FF
+      descends from DDFUN (not QD), so it inherits the **DHB-License** under §3
+      grant-back (a mechanical DD→FF translation is a modification, not
+      independent authorship). Both FF headers now carry `LicenseRef-DHB-License`,
+      mirroring the T0.5 DD treatment, with a PORT_NOTES-referencing attribution.
+      Applied in the T2.0 merge commit.
 - [ ] **T3.0a kickoff:** verify QF port lineage (DDFUN vs QD — QF is modeled on
       QD's `qd_real.cc`, so likely `LBNL-BSD-License`) and apply the correct
       license header before merging `qffunKokkos` into `main`.

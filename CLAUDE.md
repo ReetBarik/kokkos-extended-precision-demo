@@ -7,11 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is the `main` branch. It benchmarks two extended-precision backends side by side inside Kokkos CUDA kernels:
 
 - **CUDA Emulated FP128** (`quad::cuda_fp128::fp128_t`): ~33 decimal digits, requires compute ≥ 10.0 (sm_100, Blackwell)
-- **Kokkos DD (double-double)** (`quad::ddfun::ddouble`): ~30–31 decimal digits, portable to any CUDA GPU
+- **Kokkos DD (double-double)** (`Kokkos::Experimental::DoubleDouble`): ~30–31 decimal digits, portable to any CUDA GPU
+- **Kokkos FF (float-float)** (`Kokkos::Experimental::FloatFloat`): ~14 decimal digits, portable to any Kokkos execution space. Merged onto `main` in T2.0 as a mechanical DD→FF (2×FP64 → 2×FP32) translation of the DDFUN port; see `PORT_NOTES.md` for the FP32-specific fixes.
 
 Each operation runs on FP128, DD, and FP64. The output table shows **slowdown vs FP64** and **accuracy in decimal digits** for both backends side by side.
 
-It produces two executables: `kokkos_ep_demo` (39 real math ops) and `kokkos_ep_demo_complex` (24 complex math ops).
+It produces four executables: `kokkos_ep_demo` (39 real DD math ops), `kokkos_ep_demo_complex` (24 complex DD math ops), `kokkos_ep_demo_ff` (39 real FF math ops), and `kokkos_ep_demo_ff_complex` (24 complex FF math ops).
 
 ## Branch structure
 

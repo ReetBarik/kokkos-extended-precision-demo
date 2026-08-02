@@ -5,7 +5,7 @@ C++/Kokkos port of DDFUN algorithms authored by David H. Bailey
 (DHB-License, a modified-BSD-3-Clause variant).
 
 It is therefore **dual-licensed**: most of the repository is Apache-2.0,
-but the two DDFUN-derived headers carry the DHB-License, and one
+but the four DDFUN-derived headers carry the DHB-License, and one
 Kokkos-style extension header carries Apache-2.0 WITH LLVM-exception to
 match Kokkos itself. The mapping below is authoritative.
 
@@ -15,13 +15,20 @@ match Kokkos itself. The mapping below is authoritative.
 |---|---|---|
 | `third_party/include/dd_math.hpp` | DHB-License | C++/Kokkos port of DDFUN v04 (real). See `LICENSES/LicenseRef-DHB-License.txt`. |
 | `third_party/include/dd_complex.hpp` | DHB-License | C++/Kokkos port of DDFUN v04 (complex). See `LICENSES/LicenseRef-DHB-License.txt`. |
+| `third_party/include/ff_math.hpp` | DHB-License | DD→FF mechanical translation; PORT_NOTES.md documents FP32-specific fixes. See `LICENSES/LicenseRef-DHB-License.txt`. |
+| `third_party/include/ff_complex.hpp` | DHB-License | DD→FF mechanical translation; PORT_NOTES.md documents FP32-specific fixes. See `LICENSES/LicenseRef-DHB-License.txt`. |
 | `patches/kokkos_complex_quad_math.hpp` | Apache-2.0 WITH LLVM-exception | Kokkos-style extension header (a companion to `Kokkos_QuadPrecisionMath.hpp`), **not** a DDFUN derivative. Licensed to match Kokkos for eventual upstream compatibility. |
 | Everything else (demos, tests, harness, corpus, scripts, docs) | Apache-2.0 | Covered by the top-level `LICENSE`. |
 
 ## The DDFUN-derived files
 
 `third_party/include/dd_math.hpp` and `third_party/include/dd_complex.hpp`
-are derivative works of DDFUN v04:
+(double-double), together with `third_party/include/ff_math.hpp` and
+`third_party/include/ff_complex.hpp` (float-float), are derivative works of
+DDFUN v04. The FF headers are a mechanical translation of the DD headers from
+2×FP64 to 2×FP32 (see `PORT_NOTES.md` for the FP32-specific fixes); as
+modifications of a DDFUN derivative they inherit the DHB-License unchanged under
+its §3 grant-back. All four:
 
 - Original author: David H. Bailey (Lawrence Berkeley National Lab,
   retired / University of California, Davis).
@@ -48,9 +55,10 @@ prepare derivative works, incorporate into other software, distribute,
 and sublicense those enhancements, in binary and source form.
 
 In plain terms: publishing improvements to `dd_math.hpp` /
-`dd_complex.hpp` publicly grants David H. Bailey a perpetual license to
-incorporate those improvements back into DDFUN. Anyone who redistributes
-the DDFUN-derived files from this repository inherits this term.
+`dd_complex.hpp` / `ff_math.hpp` / `ff_complex.hpp` publicly grants David H.
+Bailey a perpetual license to incorporate those improvements back into DDFUN.
+Anyone who redistributes the DDFUN-derived files from this repository inherits
+this term.
 
 ### Commercial-use pointer
 

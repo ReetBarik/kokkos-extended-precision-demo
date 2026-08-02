@@ -82,7 +82,22 @@ add_executable(kokkos_ep_demo_complex src/demo_complex.cpp)
 target_include_directories(kokkos_ep_demo_complex PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(kokkos_ep_demo_complex PRIVATE Kokkos::kokkos)
 
-install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex RUNTIME DESTINATION bin)
+# ---- FF (float-float) demos (T2.0) ------------------------------------------
+# Same oracle plumbing as the DD demos: the __float128 real oracle comes through
+# Kokkos::kokkos (LIBQUADMATH TPL, T0.0); kokkos_ep_demo_ff_complex additionally
+# needs the local impl/Kokkos_ComplexQuadPrecisionMath.hpp wrapper (T0.3, probed
+# above). -fext-numeric-literals is already set globally for GCC.
+add_executable(kokkos_ep_demo_ff src/demo_ff_real.cpp)
+target_include_directories(kokkos_ep_demo_ff PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ep_demo_ff PRIVATE Kokkos::kokkos)
+
+add_executable(kokkos_ep_demo_ff_complex src/demo_ff_complex.cpp)
+target_include_directories(kokkos_ep_demo_ff_complex PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ep_demo_ff_complex PRIVATE Kokkos::kokkos)
+
+install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex
+                kokkos_ep_demo_ff kokkos_ep_demo_ff_complex
+        RUNTIME DESTINATION bin)
 
 # ---- Tests (T0.1: backend-parameterized harness) ----------------------------
 # THIRD_PARTY_INCLUDE (set above) is consumed by tests/CMakeLists.txt.
