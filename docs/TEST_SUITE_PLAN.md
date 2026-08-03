@@ -1335,7 +1335,7 @@ regression gate for the follow-up bug tasks B5/B6/B7 below (the FF siblings of
 T1.4's DD B1/B2/B3).
 
 - Executed 2026-08-03. Commit `12020a4` (task); DONE block + three B-task stubs
-  (B5/B6/B7) + subsection rename + docs-pointer follow.
+  (B5/B6/B7) + subsection rename `571b26b`; docs-pointer follows.
 - **`tests/ff_accuracy_test.cpp` (new, 816 LOC).** Layer-4 per-op differential
   accuracy vs the `__float128` oracle, the FF analogue of `dd_accuracy_test`
   (T1.4). Mirrors that test's structure verbatim; the mechanical changes are the
