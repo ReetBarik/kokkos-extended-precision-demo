@@ -1052,7 +1052,7 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 
 **T2.2: Non-overlap invariant checks for FF. (DONE)**
 
-- Executed 2026-08-03. Commit `f56cc2c` (task); DONE block + docs-pointer `<pending>`.
+- Executed 2026-08-03. Commit `f56cc2c` (task); DONE block + docs-pointer `c3c1921`.
 - Layer-2 output-invariant test for FF, the FP32 analogue of T1.2
   (`dd_invariant_test`): asserts the non-overlap invariant `fl(hi+lo)==hi`
   evaluated in RAW FP32 — `(f.hi + f.lo) == f.hi` in `float` — for every
