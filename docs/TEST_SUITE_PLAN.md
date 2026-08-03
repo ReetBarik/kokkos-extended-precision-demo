@@ -1177,10 +1177,91 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
   1), or documented safety-guard behavior (exp §4a saturation).
 - Depends on T0.2, T1.2, T2.0, T2.1.
 
-**T2.3: Property/identity tests for FF.**
+**T2.3: Property/identity tests for FF. (DONE)**
 
 - Same identities as T1.3, adjusted for FF's ~14 digit precision.
 - No oracle needed.
+
+- Executed 2026-08-03. Commit `c49572b` (task); DONE block + docs-pointer this
+  commit and the next.
+- **`tests/ff_property_test.cpp` (new, 799 LOC).** Layer-3 algebraic-identity
+  test, the FP32 analogue of T1.3 (`dd_property_test`): do the FF ops compose the
+  way the algebra says? Structure mirrors T1.3 verbatim; the mechanical change is
+  the precision scale (`u = 2⁻²⁴` for FF vs DD's `2⁻⁵³`). Group A 7 bit-exact +
+  Group B 13 tolerance + Test C 5/5, **0 failures across host + device**, **zero
+  diagnostic prints**. `ff_math.hpp` / `ff_complex.hpp` NOT modified (rule 4).
+- **Group A — bit-exact, no oracle (10⁶ random + full finite corpus, raw `==`).**
+  A1 `add(a,negate(a))==0`, A2 `a-a==0`, A3 `a·1==a`, A4 `a·(-1)==negate(a)`,
+  A5 `abs` sign branches, A6 `negate(negate(a))==a`, A8 add commutativity.
+  **7 identities, 14.00 digits, 0 failures.** A1–A6 use Route-A `FloatFloat(double)`
+  operands (nonzero `lo`); A8 uses single-float operands (`lo==0`, the FF analogue
+  of DD's single-double convention, since `add`'s `+a.lo+b.lo` tail reorders under
+  swap). A3/A4 call `multiply` → Dekker-domain-gated (`dom_dekker`), each **skips 22
+  Dekker-split corpus entries** past `split_safe_max()`; the rest use `dom_all`.
+  A7 mul-commutativity **demoted to B0** by design (Dekker cross-term reorders under
+  swap), exactly as in T1.3. Denormal-tail mismatches (`<2⁻¹⁰⁰`) count as skipped.
+- **Group B — tolerance vs `__float128` oracle (`#ifdef KOKKOS_EP_HAVE_QUADMATH`;
+  runtime-SKIP otherwise).** 13 identities scored with `digits_of_accuracy`,
+  **fail-gated on the MEAN** against `tolerance_digits = -log10(N·u²)` = **8.45** at
+  N=10⁶ (`u²=2⁻⁴⁸`; computed at runtime from `BackendTraits<FF>::u_squared`, NOT
+  hardcoded). B0 mul_comm, B1 sqrt²≈a, B2 exp(log a)≈a, B3 log(exp a)≈a,
+  B4 sin²+cos²≈1, B5 sin(−a)==−sin a, B6 cos(−a)==cos a, B7 tan·cos≈sin,
+  B8 2·sin·cos≈sin(2a), B9 exp(a)·exp(−a)≈1, B10 hypot²≈a²+b², B11 pow(a,2)≈a·a,
+  B12 atanh(a)≈½(log(1+a)−log(1−a)). Per-identity proven bounds (2u²/4u²/10u²) cited
+  in comments (rule 5). **All 13 pass; means 13.10–14.00, clearing the 8.45 floor
+  with room.**
+- **Test C — named-constant regressions.** C2 `log(e)≈1`, C3 `exp(log2)≈2`,
+  C4 `√2·√2≈2`, C5 `log(10)≈log10` constant, plus C1 `|sin(π)|≤ε` (softened for
+  arg-reduction conditioning). **5/5 pass.** C6 (euler_gamma/digamma) SKIPPED — no
+  digamma op and no independent FF oracle for the constant.
+- **Device pass.** 3 Group A (A1, A3, A5) bit-exact + 2 Group B (B1, B4) digit
+  checks rerun on device at 10⁵ inputs (Serial here; `parallel_for` + `KOKKOS_LAMBDA`
+  ships `hi`/`lo` back). All PASS.
+- **B3/B9 narrowing (surfaced-not-hidden; see B4).** The outer `exp` in these
+  identities respects `ff_math.hpp`'s `a.hi≥88` guard, but B3's `log(exp(x))` calls
+  `log`, whose internal Newton iteration invokes `exp` on generic large-`|x|` args
+  and **stalls there** — not at the top-level guard. Domain narrowed
+  `[-85, 85]→[-69, 69]` (B2's clean `|log(x)|≤69` ceiling); B3 min `0.00→9.80`,
+  B9 min `0.00→12.56`. In-source B4 citations on both identities mark the
+  restoration path; cross-reference the B4 stub in the follow-up-bug-tasks
+  subsection.
+- **B4 discovery (library defect, deferred per rule 4).** `ff_math.hpp` `exp`'s
+  Taylor convergence `eps = 1e-15f` is finer than FloatFloat's resolution
+  `2⁻⁴⁸ ≈ 3.55e-15`; for ~3.1% of generic large-`|x|` args the series never drops
+  below `eps`, hits the 60-iteration cap, prints `FFEXP: iteration limit`, and
+  returns a wrong `0` (absorbed by `log`'s Newton — the identity accuracy is
+  preserved but stdout is spammed, 31,093 prints pre-narrow → 0 post-narrow). A
+  direct DD→FF port artifact: DD's `exp` uses `eps=1e-32` matching its `1.2e-32`
+  resolution with cap 100, and is clean. Logged as **B4** in the
+  follow-up-bug-tasks subsection (`from T1.4 and T2.3`).
+- **CMake / README.** Registered via plain `kokkos_ep_add_test(ff_property_test)`
+  (+5) — NO contraction flags (identities are FMA-contraction agnostic).
+  `tests/README.md` (+49) gains the registry row + "FF property/identity (Layer 3,
+  Phase 2)" section. `docs/TEST_SUITE_PLAN.md` (+34/−6): the B4 stub plus the
+  follow-up subsection rename `(from T1.4)` → `(from T1.4 and T2.3)`.
+- **Acceptance gate — all pass (Serial).** `cmake --build` clean, zero warnings;
+  `ctest` 12 tests / 685 s, `ff_property_test` #10 **Passed**, all 11 prior tests
+  still green; the sole red is the deliberately-preserved T1.4 RED on
+  `dd_accuracy_test` (erf 24.64 / erfc 19.50 / tgamma 14.56 — digit-for-digit
+  unchanged, no regression). 0 failures across Group A/B/Test C host + device;
+  **zero** `FFEXP`/`FFCSSNR`/`FFNINT` diagnostic prints in the whole run (was
+  31,093 pre-narrow). Both FF demos (`kokkos_ep_demo_ff`,
+  `kokkos_ep_demo_ff_complex`) still build and run cleanly (RC 0).
+- **Deviations (justified).** (1) Tolerance floor is **8.45** (runtime formula
+  `-log10(10⁶·2⁻⁴⁸)`), NOT the plan's **8.24** estimate — tightened not relaxed,
+  documented in-source. (2) B3/B9 domain `[-85, 85]→[-69, 69]` per the
+  option-2-adapted verdict (surface-and-defer, rule 4: no `ff_math.hpp` fix). (3)
+  The task-commit body was authored by cluster-Claude (its drafted middle was elided
+  in handoff).
+- **Scope-out.** Real FF ops only — no complex identities (`ff_complex.hpp`); no
+  associativity/distributivity anti-tests (documented in-source as deliberately
+  untested — FALSE for any finite-precision format); device parity limited to 3
+  Group A + 2 Group B; quadmath NOT used as the Group A oracle. No B1–B4 fixes.
+- **Bugs found in FF code.** One (B4, above) — surfaced, reported, and deferred per
+  rule 4; not patched in this task.
+- See `c49572b` for the code diff and this DONE block for the outcome; B4 stub in
+  the follow-up-bug-tasks subsection.
+- Depends on T0.2, T1.3, T2.0, T2.1.
 
 **T2.4: Differential accuracy for FF vs quadmath.**
 
