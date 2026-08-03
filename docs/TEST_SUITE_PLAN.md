@@ -1050,16 +1050,110 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
   prompt.
 - Depends on T0.2, T1.1, T2.0.
 
-**T2.2: Non-overlap invariant checks for FF.**
+**T2.2: Non-overlap invariant checks for FF. (DONE)**
 
-- Same as T1.2 but for `ff_math.hpp` ops (add/sub/mul/div/sqrt/exp/
-  log/sin/cos/tan/... — inventory from `ff_math.hpp` at
-  implementation time, ~40 ops).
-- **Explicit regression tests from PORT_NOTES §4:**
-  - `exp` with input > 79 must NOT return NaN
-  - `ffnint(19.4999993...)` must return 19, not 20
-  - `remainder(68.379..., 3.5066...)` must return +1.7533, not −1.7533
-- Report which op fails with input bit patterns.
+- Executed 2026-08-03. Commit `f56cc2c` (task); DONE block + docs-pointer `<pending>`.
+- Layer-2 output-invariant test for FF, the FP32 analogue of T1.2
+  (`dd_invariant_test`): asserts the non-overlap invariant `fl(hi+lo)==hi`
+  evaluated in RAW FP32 — `(f.hi + f.lo) == f.hi` in `float` — for every
+  `ff_math.hpp` op that returns a `FloatFloat`. Oracle-independent: no
+  `__float128`, no `KOKKOS_EP_HAVE_QUADMATH` gate; runs unconditionally like T1.2.
+  Total 48,787,956 inputs checked across all 50 ops, **0 failures**.
+- **`tests/ff_invariant_test.cpp` (new, 830 LOC).** Structure mirrors T1.2
+  verbatim: Test A (every op, two passes — 10^6 op-appropriate random inputs +
+  full corner-case corpus `corpus::unary/binary<float>`, zero on / inf,nan off),
+  Test B (device tripwire: add/multiply/sqrt/exp/sin at 10^5 via `parallel_for`,
+  results copied back and checked on host), Test C (PORT_NOTES §4 named
+  regressions). The one type change vs T1.2: the invariant is FP32-typed (DD uses
+  `double`). No `__float128` promotion — that tests the exact real sum, a different
+  property.
+- **50-op inventory, none missing.** All 50 ops from T1.2's inventory are present
+  on the FF side (31 unary + 13 binary + fma + 4 two-output components + pow_int);
+  the report-and-stop-if-missing contingency never fired.
+- **FP32-narrower domain predicates, re-derived from `ff_math.hpp` (not copied from
+  T1.2).** FP32's exponent range is ~6× narrower than FP64 and the port has
+  FP32-specific hazards T1.2 never hit. Skip-not-fail gating keeps out-of-domain
+  inputs — and the domain-guard diagnostics `ff_math.hpp` would otherwise print —
+  out of the run. Material tightenings: `exp < 88` (not DD's 300); trig family
+  lower floor `|x| >= 1e-25` (FP32 `sincos` Taylor iteration-limit on tiny args, no
+  T1.2 counterpart); `atan2` per-operand floor `|·| >= 1e-18`; log-window
+  `[1e-34, 1e34]`; `sinh`/`cosh < 40`, `tanh < 20`, `tgamma ∈ [1e-3, 23)`.
+- **Registered via plain `kokkos_ep_add_test(ff_invariant_test)`** — no contraction
+  flags; the invariant holds regardless of FMA contraction (not an EFT test).
+- **`tests/README.md` (+101 LOC).** Registry row + "FF non-overlap invariant
+  (Layer 2, Phase 2)" section documenting the FP32-narrower predicates and every
+  finding below.
+
+- **FINDING 1 — underflow-tail round-to-even hole (harness improvement, NOT a
+  masking fix; cross-cutting — see known-lurking issue).** The first full run
+  reported "failures" on `exp`/`exp2`/`exp10` (and `device:exp`) for very negative
+  args (e.g. `exp(-84.32) → hi=2.40e-37, lo=-1.121e-44`). These are NOT
+  normalization defects: each failing `lo` is a *subnormal* landing EXACTLY on
+  `±½ ulp(hi)`, where round-to-even flips `fl(hi+lo)` off `hi` by one ulp even
+  though the mathematical non-overlap `|lo| ≤ ½ ulp(hi)` still holds. Systematic
+  only once `|hi| < 2^-102`, where the tie value `½ ulp(hi) = 2^(e-24)` is itself
+  subnormal so `lo` quantizes straight onto the tie. This is a property of
+  double-word arithmetic in the FP32 denormal tail — universal to DD/FF/QF — not an
+  `ff_math.hpp` bug (Rule 4 never engaged). Resolved with an output-side, general
+  skip-not-fail guard in `result_checkable` (`kUnderflowTail = 2^-100`, a 4× margin
+  above `2^-102`); it does NOT mask a real overlap — a normal-range
+  `|lo| > ½ ulp(hi)` is still checked.
+- **FINDING 2 — `remainder(68.379f, 3.5066f)` sign.** The prompt (following
+  PORT_NOTES §4b) expected a POSITIVE FP32 remainder (+1.7533) on the premise
+  `a/b ≈ 19.4999993 < 19.5` at FP32 → `nint=19`. That premise does NOT hold for
+  these literals: at FP32 `68.379f/3.5066f = 19.5000858` (> 19.5), so `nint=20` and
+  the remainder is NEGATIVE (−1.75300026). `std::remainderf` agrees exactly and the
+  shipped FF `remainder` reproduces it — FF is correct; the historical `ffnint` bug
+  must have been about a different input. Sign gated against `std::remainderf`
+  (same-precision oracle), NOT `std::remainder` (which would compare an FP32 op to
+  the FP64 answer).
+- **FINDING 3 — nint literal `19.4999993f`.** Rounds to EXACTLY `19.5f` at FP32
+  (`lo=0`) → nint 20 (correct); the historical 19-vs-20 distinction only appears
+  when `19.4999993` is carried in the FF pair via the Route-A double split
+  (`hi=19.5, lo=-7e-7`, total < 19.5), where the fixed `ffnint` returns 19. Test C
+  checks both constructions.
+- **exp §4a Test C — two DISTINCT roles, made explicit in the output.**
+  `79.5/80/85` are the load-bearing NaN-pre-fix regression cases (the §4a bug was
+  NaN-from-splitter-overflow: `b * 8193.0f` overflowed FP32); `88.7/88.72` are
+  edge-of-saturation GUARD cases past the `a.hi >= 88` guard — they saturate to +0
+  (invariant trivially holds, not-NaN), emitting the run's only 2 `FFEXP`
+  diagnostics, which are EXPECTED and NORMAL. Documented safety-guard behavior is a
+  PASS, not a report-and-stop.
+
+- **KNOWN-LURKING ISSUE (cross-cutting; follow-up, NOT urgent, NOT a blocker).**
+  The underflow-tail round-to-even hole (Finding 1) is NOT FF-specific — it is a
+  property of the `fl(hi+lo)==hi` *evaluation* itself, so DD (and a future QF) can
+  hit it too. `dd_invariant_test` (T1.2) simply never tripped it across ~50.5M
+  inputs because FP64's exponent range is ~6× wider, keeping the denormal tail out
+  of reach for realistic random inputs; FF surfaced it because FP32's narrower
+  range brings the tail into reach at ordinary `exp`-of-negative inputs.
+  **Follow-up:** give `dd_invariant_test` the same `kUnderflowTail`-style guard so
+  it is not surprised by the same hole if the DD op inventory grows or a future
+  random seed lands in the tail. Tracked here; no code change in this task.
+- **Acceptance gate — all pass (Serial).** `cmake --build` clean, zero warnings;
+  `ff_invariant_test` EXIT=0, 0 failures over 48,787,956 checked inputs (Test A
+  48 ops + fma + pow_int, Test B 5 device ops, Test C 51/51). Only 2 internal
+  `ff_math.hpp` diagnostics in the whole run — the two Test C edge-of-saturation
+  `FFEXP` prints; Test A/B are diagnostic-clean. `ctest` 10/11 green incl.
+  `ff_invariant_test`; the sole failure is the deliberately-preserved T1.4 RED on
+  `dd_accuracy_test` (erf 24.64 / erfc 19.50 / tgamma 14.56 vs tol 25.91,
+  digit-for-digit unchanged, pending B1/B2/B3); all previously-passing tests still
+  green. Both FF demos (`kokkos_ep_demo_ff`, `kokkos_ep_demo_ff_complex`) still
+  build and run cleanly (RC 0).
+- **Deviations (justified).** (1) The `kUnderflowTail` output-side guard is an
+  addition to T1.2's `result_checkable` skip criteria not present in the T1.2
+  template — see Finding 1. (2) Test C `exp(88.7)/(88.72)` treated as
+  PASS-on-saturation (guard fires → +0, not NaN) rather than asserting a finite
+  non-NaN value the ≥88 guard makes impossible — the §4a NaN-fix is proven by
+  79.5/80/85 instead. Both are documented in-code and in README.
+- **Scope-out.** Real FF ops only — `ff_complex.hpp` out of scope; accuracy-vs-
+  oracle is T2.4. No new corpus categories (`corpus.hpp` already parametric per
+  T0.2). No QF work. No B1/B2/B3 work. `ff_math.hpp` / `ff_complex.hpp` NOT
+  modified (rule 4).
+- **Bugs found in FF code.** None. All findings are either correct FF behavior
+  (Findings 2, 3), a fundamental double-word property resolved test-side (Finding
+  1), or documented safety-guard behavior (exp §4a saturation).
+- Depends on T0.2, T1.2, T2.0, T2.1.
 
 **T2.3: Property/identity tests for FF.**
 
