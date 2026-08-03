@@ -956,7 +956,7 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 
 **T2.1: EFT unit tests for FF. (DONE)**
 
-- Executed 2026-08-02. Commit `4e025b0`.
+- Executed 2026-08-02. Commit `4e025b0` (task); DONE block + docs-pointer `8c9a00f`.
 - Layer-1 EFT test for FF, mirroring T1.1's shape (same four-corpora
   coverage plus named hard cases and device parity). The one material
   divergence is the oracle: plain **FP64** instead of quadmath —
