@@ -863,20 +863,96 @@ now; these are stubs, one screenful each.
 FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 + merge, not implement.
 
-**T2.0: Merge fffunKokkos into main behind FF namespace.**
+**T2.0: Merge FF backend into main behind Kokkos::Experimental namespace. (DONE)**
 
-- Fast-forward or PR-merge `fffunKokkos` into `main`.
-- Resolve any conflicts with T0.0 changes (both touched
-  `CMakeLists.txt` and `demo_*.cpp`).
-- Ensure `main` builds all three demos: `kokkos_ep_demo` (DD real),
-  `kokkos_ep_demo_complex` (DD complex), `kokkos_ep_demo_ff`
-  (FF real), `kokkos_ep_demo_ff_complex` (FF complex). Adjust names
-  as needed.
-- Update `README.md` and `CLAUDE.md` to reflect FF backend on main.
-- Do NOT modify `ff_math.hpp` or `ff_complex.hpp` — the port has been
-  validated empirically via PORT_NOTES bug-hunt; changes would need
-  new testing.
-- Deliverable: `main` HEAD builds and runs both DD and FF demos.
+- Executed 2026-08-02. Commit `dad92ef`.
+- Brought the mechanically-DD→FF-translated float-float library from
+  `fffunKokkos` onto `main`, behind the same `Kokkos::Experimental` namespace
+  and STL-style API the DD backend adopted in T0.4. Non-trivial because the FF
+  files predate every Phase-0 convention (T0.0 oracle plumbing, T0.3 complex
+  oracle, T0.4 namespace/rename, T0.5 license posture) and had to be brought
+  into conformance with all four without touching a single arithmetic body:
+  the port's correctness rests on the PORT_NOTES bug-hunt, so any behavioral
+  edit would invalidate that validation. 15 files, +3110/−11; 9 FF-only files
+  created, 6 existing files modified, 0 deleted.
+- **Merge strategy.** Cherry-pick of the FF work, NOT a `git merge` of
+  `fffunKokkos` — `main` had already diverged via the entire Phase-0/Phase-1
+  sequence, so a merge would have dragged pre-T0.0 versions of shared files
+  back in. For every file that exists on both branches (`CMakeLists.txt`,
+  `README.md`, `CLAUDE.md`, `.gitignore`, `NOTICE.md`, `TEST_SUITE_PLAN.md`,
+  `probe_op.cpp`) **main wins** and the FF content is folded in by hand; the 9
+  FF-only files (`ff_math.hpp` 924, `ff_complex.hpp` 313, `demo_ff_real.cpp`
+  746, `demo_ff_complex.cpp` 650, `PORT_NOTES.md` 220, `test_ffmul.cpp` 110,
+  `gen_ff_constants.cpp` 46, `run_all_ff_ops.sh` 21, `run_all_ff_complex_ops.sh`
+  21) are copied over verbatim.
+- **Namespace + type renaming (mirror T0.4).** Both FF headers received the
+  full T0.4-style rename with no arithmetic bodies changed: `namespace
+  quad::ffun` → `Kokkos::Experimental`; `ffloat` → `FloatFloat`; `ffcomplex` →
+  `FloatFloatComplex`; `ffadd`/`ffsub`/`ffmul`/`ffdiv` →
+  `add`/`subtract`/`multiply`/`divide`; `ffmulf`/`ffdivf` →
+  `multiply_scalar`/`divide_scalar`; `ffmulff` → `two_prod`; `ffneg` →
+  `negate`; `ffnint` → `round_to_nearest_int`; `ffang` → `angle`; `powi` →
+  `pow_int`; `ffexpint`/`ffincgamma` → `expint`/`incgamma`; `ff_pi()…` →
+  `FloatFloat_pi()…`; `make_ff` → `FloatFloat::from_bits`. Each header ends
+  with a bottom-of-header `namespace Kokkos { … }` re-exposure block
+  (~40 one-line forwards) mirroring `impl/Kokkos_QuadPrecisionMath.hpp`, so
+  `Kokkos::exp(ff)` works identically to `Kokkos::exp(double)`;
+  `add`/`subtract`/`multiply`/`divide` are deliberately NOT re-exposed under
+  `Kokkos` (operators + ADL only, same posture as DD).
+- **Licensing.** The load-bearing decision: FF descends from DDFUN via a
+  mechanical DD→FF translation — `ff_math.hpp` line 3 reads "Copyright (c) 2024
+  David H. Bailey — DDFUN v04 (original algorithms)" and its header comment
+  states it "is a mechanical translation of dd_math.hpp … from double-double
+  (2×FP64) to float-float (2×FP32)" — so it inherits the **DHB-License** under
+  §3 grant-back, NOT independent authorship. Both FF headers therefore carry
+  `LicenseRef-DHB-License` with a PORT_NOTES-referencing attribution string,
+  mirroring T0.5's DD treatment. `NOTICE.md` gained 2 FF file-to-license rows
+  and its DDFUN paragraph now enumerates all four derivative files
+  (dd_math/dd_complex/ff_math/ff_complex). The `TEST_SUITE_PLAN.md` Licensing
+  section's T2.0-kickoff checkbox was flipped to `[x]` with the FF-lineage
+  rationale recorded inline. (All of the above landed in `dad92ef`.)
+- **CMake wiring.** 2 new targets: `kokkos_ep_demo_ff` (from
+  `demo_ff_real.cpp`) and `kokkos_ep_demo_ff_complex` (from
+  `demo_ff_complex.cpp`), both linking `Kokkos::kokkos` only (the T0.0 route —
+  quadmath comes through Kokkos, not a `find_library`). Deprecates
+  `fffunKokkos`'s ad-hoc `kokkos_ff_demo` / `kokkos_ff_demo_complex` names. The
+  install target list is expanded to all 4 demos.
+- **Demo adaptation.** Real oracle migrated to the T0.0 posture
+  (`Kokkos::exp((__float128)…)`); complex oracle migrated to the T0.3 posture
+  (`Kokkos::exp((__complex128)…)` plus an `#include` of
+  `impl/Kokkos_ComplexQuadPrecisionMath.hpp`). Call sites use the
+  `namespace ff = Kokkos::Experimental;` alias. No `KOKKOS_EP_HAVE_QUADMATH`
+  gate on the include: `main`'s DD demos (`demo_real.cpp`/`demo_complex.cpp`)
+  don't gate the oracle include either, so the matched (correct) posture is an
+  unconditional include — the original prompt overspecified a gate that would
+  have diverged from the DD demos.
+- **Acceptance gate — all pass.** Build clean with zero warnings on
+  FF-affected files; all 4 demos build; both FF demos run on Serial and exit 0;
+  `ctest` 8/9 Passed — the one failure is the deliberately-preserved T1.4 RED
+  (erf 24.64 / erfc 19.50 / tgamma 14.56, pending B1/B2/B3), with `dd_math.hpp`
+  untouched so rule 4 is respected; the FF accuracy-columns diff pre/post-rename
+  is **empty** across 39 real + 48 complex rows (`--batch 500000 --repeats 5
+  --seed 12345`, confirming rule 7 — the rename is non-behavioral); SPDX grep
+  returns exactly 4 `LicenseRef-DHB-License` + 1 `Apache-2.0-WITH-LLVM-exception`,
+  no mis-stamped headers.
+- **Deviations (justified).** (1) `run_all_ff_complex_ops.sh` referenced the
+  deprecated `kokkos_ff_demo` name — updated to `kokkos_ep_demo_ff_complex` to
+  match the T2.0 target naming (the task explicitly deprecates the ad-hoc
+  names). (2) `gen_ff_constants.cpp`'s template string still emits the old
+  `make_ff`/`ffloat` spellings — left verbatim because it is an out-of-scope,
+  run-once constant-regeneration tool (not built by CMake, gitignored binary);
+  flagged for a T2.x refresh if it is ever re-run. (3) No
+  `KOKKOS_EP_HAVE_QUADMATH` gate — see Demo adaptation above.
+- **Scope-out.** No modifications to `ff_math.hpp` / `ff_complex.hpp` bodies —
+  T0.4 renames only. No FF test files (those are T2.1–T2.6). No harness
+  extension (`BackendTraits<FF>` is T2.1's problem). No corpus extension
+  (already parametric per T0.2). No QF work (Phase 3). No B1/B2/B3 work
+  (deferred to after Phase 2/3). No `probe_op.cpp` merge (main wins). The
+  `fffunKokkos` branch is left in place as a historical reference until Phase 3
+  completes.
+- **Bugs found in FF code.** None — this was a mechanical rename, and the
+  byte-identical accuracy diff confirms it was non-behavioral.
+- Depends on T0.0, T0.3, T0.4, T0.5.
 
 **T2.1: EFT unit tests for FF.**
 
