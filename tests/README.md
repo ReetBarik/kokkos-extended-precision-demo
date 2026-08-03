@@ -32,6 +32,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
 | `ff_eft_test`     | T2.1         | EFT bit-exactness: FF `twoSum` + Dekker `twoProduct` (splitter `8193.0f` = 2¹³+1); **FP64 oracle** — exact, no LIBQUADMATH needed, runs unconditionally |
 | `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
+| `ff_invariant_test` | T2.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** FF op, evaluated in **raw FP32**; FP32-narrower domain predicates derived from `ff_math.hpp`; oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
 | `dd_accuracy_test` | T1.4        | Differential accuracy vs `__float128`: per-op digits of accuracy over 10⁶ random + corpus; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 25.91; PORT_NOTES §5 conditioning-limited ops report **EXPECTED-MIN-DROP** (gated on mean, not min); runtime-SKIPs without LIBQUADMATH |
 | `dd_e2e_test`     | T1.6         | End-to-end cancellation kernels: √(x²+1)−x, Σ1/k², Machin's π, alternating harmonic — all quadmath-oracle-gated |
@@ -278,6 +279,106 @@ outside an op's domain (NaN/inf/subnormal `hi`, or out-of-domain input) are
 **skipped, not failed**. Five ops (`add`, `multiply`, `sqrt`, `exp`, `sin`) also
 run a device pass. Registered with the plain `kokkos_ep_add_test` helper — no
 contraction flags (the invariant holds regardless of FMA contraction).
+
+### FF non-overlap invariant (Layer 2, Phase 2)
+
+`ff_invariant_test.cpp` (**T2.2**) is the FF analogue of `dd_invariant_test.cpp`,
+mirroring its structure verbatim (50-row op inventory, two-pass random+corpus
+shape, skip-not-fail domain gating, per-op reporting, 5-op device pass, Test C
+PORT_NOTES §4 regressions). The one type change: the invariant is evaluated in
+**raw FP32** — `(f.hi + f.lo) == f.hi` in `float` — where the DD test uses
+`double`. Still **no** `__float128` promotion (that tests the exact real sum, a
+different property) and **no** `KOKKOS_EP_HAVE_QUADMATH` gate: like T1.2 it runs
+unconditionally. Every op in `ff_math.hpp` that returns a `FloatFloat` (or two via
+out-params for `sincos`/`sinhcosh`) has a corresponding FF entry — no DD op is
+missing on the FF side. Registered with the plain `kokkos_ep_add_test` helper (no
+contraction flags).
+
+**FP32-narrower domain predicates.** Every predicate was **re-derived** from the
+shipped `ff_math.hpp` guards (not copied from T1.2) and empirically confirmed to
+emit **zero** internal diagnostics. FP32's exponent range is ~6× narrower than
+FP64, and the port has FP32-specific hazards T1.2's FP64 code never hit. The
+material tightenings:
+
+- `exp` gates at `a.hi < 88.0` (FP32 ln-range guard in `ff_math.hpp`), not DD's
+  300; `exp2`/`exp10` scale accordingly (`|a|<126` / `|a|<38`).
+- **trig family** (`sin`/`cos`/`tan`/`atan`, plus `atan2` and the `tgamma`
+  reflection path) carries a **lower** magnitude bound (`|x| ≥ 1e-25`, or exactly
+  0): FF's `sincos` Taylor loop hits its iteration limit (`FFCSSNR`) for tiny
+  nonzero arguments because `r = x/2^nq` underflows at FP32. DD's FP64 `sincos`
+  never saw this, so this floor has no T1.2 counterpart.
+- `atan2` additionally floors **both** operands away from `|·|<1e-18` (0 allowed):
+  a subnormal-tiny operand paired with a normal one drives the internal `sincos`
+  degenerate — an FF-specific tightening of DD's larger-magnitude-only gate.
+- `log`-family window `[1e-34, 1e34]` (keeps `|log x| < ~78`, inside `exp`'s
+  88-guard); `sinh`/`cosh` `|x|<40`, `tanh` `|x|<20`, `tgamma` `x∈[1e-3, 23)`,
+  `asinh`/`acosh`/`atan` upper caps `1e18` (so `x·x` stays finite in FP32).
+
+**Test C — PORT_NOTES §4 regressions.** The `exp` §4a cases split into **two
+distinct roles** (kept explicit in the test output so readers don't conflate them):
+
+- **79.5 / 80 / 85 — bug-regression cases.** The historical §4a bug was
+  NaN-from-splitter-overflow (`exp`'s internal Dekker split did `b * 8193.0f`,
+  which overflowed FP32 → NaN). These three are the **load-bearing** regression
+  cases: pre-fix they returned NaN; post-fix (direct scaling) they return finite,
+  invariant-clean results. No diagnostic expected.
+- **88.7 / 88.72 — edge-of-saturation guard cases.** These sit **past** the shipped
+  `a.hi ≥ 88` guard and do *not* re-test the §4a bug; they assert the guard fires
+  sensibly at the edge — saturating to **+0** (invariant trivially holds, not-NaN)
+  rather than producing garbage. Each emits one `FFEXP: argument too large` print;
+  those **2** diagnostics are the *only* internal `ff_math.hpp` output in the whole
+  run (Test A/B are diagnostic-clean) and are **expected and normal** — documented
+  safety-guard behavior is a pass, not a report-and-stop.
+
+`round_to_nearest_int` at 19.4999993 and the k±0.5 family; `remainder(68.379,
+3.5066)` gated against `std::remainderf` (the **same-precision** FP32 oracle).
+
+> **Finding (remainder sign).** The T2.2 prompt (following PORT_NOTES §4b) expected
+> a *positive* FP32 remainder here, on the premise that `a/b ≈ 19.4999993 < 19.5`
+> at FP32 → `nint=19`. That premise does **not** hold for the corpus literals: at
+> FP32 `68.379f/3.5066f = 19.5000858` (**>** 19.5), so the correct `nint` is 20 and
+> the correct remainder is **negative** (−1.75300026). `std::remainderf` agrees,
+> and the shipped FF `remainder` reproduces it exactly. The §4b "+1.7533" text
+> describes a different rounding of `a/b` than these specific literals produce. The
+> test gates against `std::remainderf` (not `std::remainder`, which would compare an
+> FP32 op to the FP64 answer) and passes. See the Test C comment for the full
+> derivation.
+
+> **Finding (nint literal).** `19.4999993f` rounds to **exactly** `19.5f` at FP32
+> (`lo=0`), so `round_to_nearest_int` of the pure-float value returns 20 — correct.
+> The historical `19`-vs-`20` distinction only appears when the full-precision value
+> `19.4999993` is carried in the FF pair via the Route-A double split (`hi=19.5`,
+> `lo=−7e-7`, total < 19.5), where the fixed `ffnint` (rounding `hi+lo` in FP64)
+> returns 19. Test C checks both constructions.
+
+> **Finding (underflow-tail ties → `kUnderflowTail` skip).** The bulk random+corpus
+> pass initially reported "failures" for `exp`/`exp2`/`exp10` (and `device:exp`) on
+> **very negative** arguments — e.g. `exp(-84.32) → hi=2.40e-37, lo=-1.121e-44`.
+> These are **not** normalization defects. Each failing `lo` is a **subnormal** that
+> lands *exactly* on the `½ ulp(hi)` tie point (`-1.121e-44 = -½·2⁻¹⁴⁵` for that
+> `hi`), where round-to-even flips `fl(hi+lo)` off `hi` by one ulp **even though the
+> mathematical non-overlap `|lo| ≤ ½ ulp(hi)` still holds**. This is systematic only
+> in the FP32 denormal tail: once `|hi| < 2⁻¹⁰²`, the tie value `½ ulp(hi) = 2^(e−24)`
+> is itself subnormal, so the residual `lo` is quantized straight onto the tie. The
+> strict bit-exact form `fl(hi+lo)==hi` is therefore **ill-posed** there — a property
+> of double-word arithmetic near underflow, universal to DD/FF/QF, not an
+> `ff_math.hpp` bug (DD rarely hits it because FP64 underflows ~270 decades lower).
+> `result_checkable` skips this tail via `kUnderflowTail = 2⁻¹⁰⁰` (a 4× margin above
+> `2⁻¹⁰²`); the guard is output-side and general (any op), and does **not** mask a
+> real overlap — a normal-range `hi` with `|lo| > ½ ulp(hi)` is still checked. With
+> the guard, all ~48.8M checked inputs pass with **zero** failures.
+>
+> **Not FF-specific — DD has the same latent hole.** This round-to-even hole in the
+> `fl(hi+lo)==hi` *evaluation* is a property of double-word arithmetic, not of FF:
+> DD (and a future QF) can hit it too. `dd_invariant_test` (T1.2) simply never
+> tripped it across ~50.5M inputs because FP64's exponent range is ~6× wider, so the
+> denormal tail is out of reach for realistic random inputs. FP32's narrower range
+> brings the tail into reach at *ordinary* op inputs (`exp` of any sufficiently
+> negative argument), which is why FF surfaced it first. **Follow-up (not urgent, not
+> a blocker):** give `dd_invariant_test` the same `kUnderflowTail`-style guard so it
+> is not surprised by the same hole if the DD op inventory grows or a future random
+> seed lands in the tail. Flagged as a cross-cutting known-lurking issue in the T2.2
+> DONE block.
 
 ## Property/identity tests (Layer 3)
 

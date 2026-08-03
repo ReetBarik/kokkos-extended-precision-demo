@@ -138,6 +138,10 @@ kokkos_ep_add_test(hello_test)
 kokkos_ep_add_test(corpus_test)
 # T1.2 non-overlap invariant: oracle-independent, no contraction flags needed.
 kokkos_ep_add_test(dd_invariant_test)
+# T2.2 non-overlap invariant for FF: FP32-typed fl(hi+lo)==hi over every FF op.
+# Oracle-independent (no __float128, runs without LIBQUADMATH). No contraction
+# flags — the invariant holds regardless of FMA contraction (not an EFT test).
+kokkos_ep_add_test(ff_invariant_test)
 # T1.3 property/identity tests: Group A bit-exact (no oracle), Group B/Test C use
 # the __float128 oracle. Plain helper — NOT an EFT test, so no contraction flags.
 kokkos_ep_add_test(dd_property_test)
