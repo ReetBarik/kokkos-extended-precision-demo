@@ -36,6 +36,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
 | `ff_property_test` | T2.3        | FF analogue of `dd_property_test`: **Group A** bit-exact (7 identities, no oracle), **Group B** tolerance vs `__float128` (13 identities, **mean-gated** at −log10(N·u²) ≈ 8.45 for u=2⁻²⁴), **Test C** named-constant regressions (target ≥12 of FF's 14 digits); exp-guard-narrowed domains for the exp round-trips; runtime-SKIPs without LIBQUADMATH |
 | `dd_accuracy_test` | T1.4        | Differential accuracy vs `__float128`: per-op digits of accuracy over 10⁶ random + corpus; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 25.91; PORT_NOTES §5 conditioning-limited ops report **EXPECTED-MIN-DROP** (gated on mean, not min); runtime-SKIPs without LIBQUADMATH |
+| `ff_accuracy_test` | T2.4        | FF analogue of `dd_accuracy_test`: per-op digits of accuracy over 10⁶ random + corpus vs `__float128`; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 8.45 (u=2⁻²⁴, cap 14); FP32-narrower op domains from T2.2; shared PORT_NOTES §5 registry → **EXPECTED-MIN-DROP**; runtime-SKIPs without LIBQUADMATH |
 | `dd_e2e_test`     | T1.6         | End-to-end cancellation kernels: √(x²+1)−x, Σ1/k², Machin's π, alternating harmonic — all quadmath-oracle-gated |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
@@ -475,6 +476,67 @@ inputs, with `View<float*>` limb transfer. Registered with the plain
 `kokkos_ep_add_test` helper (no contraction flags — identities are
 FMA-contraction agnostic). `ff_math.hpp`/`ff_complex.hpp` are **not** modified by
 this layer.
+
+## Differential accuracy (Layer 4)
+
+Layer 4 (`dd_accuracy_test`, **T1.4**) asks the question Layers 1-3 deliberately
+did not: *does `op(x)` equal the true real answer to N digits?* For **every** op
+in the T1.2 inventory (~50 rows), it widens the device result to `__float128` and
+compares against a quadmath oracle evaluated on the SAME input, scoring each
+element in **digits of accuracy** `digits = -log10(rel_err)` (capped at DD's 31 =
+`-log10(u²)`, u = 2⁻⁵³). Two passes per op — **10⁶ random** (ranges taken
+verbatim from the T1.2 domain predicates) plus a **corpus** pass (the PORT_NOTES
+§3/§4 named accessor where one exists, e.g. `exp_overflow`, `trig_near_pi`,
+otherwise the generic bundler) — combined into one (min, mean, n) per op.
+
+**Fail-gates on the MEAN**, not the min, against a single uniform
+`tolerance_digits = -log10(N·u²) ≈ 25.91` at N = 10⁶ (no per-op tolerance
+overrides — that would defeat the point of a differential-accuracy gate). Ops in
+the shared PORT_NOTES §5 conditioning registry (`lookup_expected_min_drop`)
+report **EXPECTED-MIN-DROP: OK** when the mean clears tolerance and the low min is
+sanctioned (near-cancellation, derivative → ∞ near |a|=1, arg-reduction near ±π,
+output-denormal `exp`). Oracle subtleties handled: ties-to-even round-family →
+`nearbyint` oracle (not `round`); `exp10` → `pow(10, x)` (no `__float128`
+overload). The whole file is `#ifdef KOKKOS_EP_HAVE_QUADMATH` and runtime-SKIPs
+(77) otherwise.
+
+`dd_accuracy_test` ships **`(DONE, RED)`**: it flags three real `dd_math.hpp`
+accuracy defects (`tgamma` mean ≈ 14.56 — FP64 Lanczos coefficients; `erfc` ≈
+19.50 — `1−erf` cancellation; `erf` ≈ 24.64 — large-|z| asymptotic branch) and
+fails on them. The red is the point — it is the durable regression gate for the
+follow-up bug tasks B1/B2/B3. Per rule 4 the surfacing test reports; it does not
+patch the library.
+
+### FF differential accuracy (Layer 4, Phase 2)
+
+`ff_accuracy_test.cpp` (**T2.4**) is the FF analogue of `dd_accuracy_test.cpp`,
+mirroring its structure verbatim. The substantive changes are the **precision
+scale** and the **FP32-narrower op domains**:
+
+- **Scale.** FF's unit roundoff is `u = 2⁻²⁴` (vs DD's `2⁻⁵³`), so `u² = 2⁻⁴⁸`,
+  digits are capped at **14** (`BackendTraits<FF>::max_digits`), and the
+  statistical floor becomes `tolerance_digits = -log10(N·u²) ≈ 8.45` at N = 10⁶
+  (vs DD's ≈ 25.91) — computed at runtime from `BackendTraits<FF>::u_squared`, not
+  hardcoded. Expected mean per PORT_NOTES: 13.3-14.0.
+- **Domains.** Random ranges and domain predicates are taken **verbatim from the
+  T2.2 inventory** (`ff_invariant_test.cpp`), not re-derived: `exp` guards at
+  `a.hi ≥ 88` (not DD's 300); trig carries the FP32 tiny-argument lower bound
+  (`|x| ≥ 1e-25`, else 0, to dodge the sincos iteration-limit hazard);
+  `sinh`/`cosh` cap at `|x| < 40`, `tanh` at `|x| < 20`; the log family window is
+  `[1e-34, 1e34]`; `erf`/`erfc` use `[-6, 6]` (FF saturates to ±1 past |z|=6);
+  `tgamma` uses `[1e-3, 23)`. The corpus pass uses the FP32 accessors
+  (`corpus::unary<float>` / `<float>` named accessors).
+
+Same op set as T1.4 (~50 rows: arithmetic, transcendentals, roots, comparisons,
+two-output `sincos`/`sinhcosh`, ternary `fma`, integer-scalar `pow_int`), the same
+oracle subtleties (`nearbyint` for the ties-to-even round-family, `pow(10,x)` for
+`exp10`), the same MEAN fail-gate with EXPECTED-MIN-DROP for the **shared**
+PORT_NOTES §5 registry (conditioning is a property of the algorithm, not the
+width, so DD and FF read the same table). Registered with the plain
+`kokkos_ep_add_test` helper (no contraction flags — not an EFT test), mirroring
+`dd_accuracy_test`. Per rule 4, `ff_math.hpp` / `ff_complex.hpp` are **not**
+modified: any op whose mean falls below tolerance is REPORTED (op, pass, offending
+input, digit count) and fails; it is not patched or xfailed.
 
 ## FMA-contraction guard (Layer 5)
 

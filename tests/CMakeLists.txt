@@ -163,6 +163,11 @@ kokkos_ep_add_eft_test(ff_eft_test)
 # dd_property_test. Plain helper — NOT an EFT test, so no contraction flags
 # (identities are FMA-contraction agnostic).
 kokkos_ep_add_test(ff_property_test)
+# T2.4 differential accuracy vs quadmath for FF: per-op digits-of-accuracy against
+# the __float128 oracle (runtime-SKIPs without LIBQUADMATH). FF analogue of
+# dd_accuracy_test. Plain helper — NOT an EFT test, so no contraction flags
+# (mirrors dd_accuracy_test's registration).
+kokkos_ep_add_test(ff_accuracy_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)
