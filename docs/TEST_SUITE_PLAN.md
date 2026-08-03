@@ -1407,7 +1407,7 @@ T1.4's DD B1/B2/B3).
 - Same as T1.5 but for FF. Precedent: `test_ffmul.cpp` compiles with
   `-ffloat-store` for this reason.
 
-- Executed 2026-08-03. Commit `PENDING` (task); DONE block + docs-pointer follow.
+- Executed 2026-08-03. Commit `e293de7` (task); DONE block + docs-pointer `b98e29e`.
   Closes Phase 2 (7 of 7 tasks).
 - **`tests/ff_fma_guard_test.cpp` (new, 514 LOC).** Layer-5 positive test of the
   FMA-contraction posture T2.1 adopts defensively, the FP32 analogue of T1.5
