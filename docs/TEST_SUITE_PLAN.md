@@ -1402,10 +1402,97 @@ T1.4's DD B1/B2/B3).
 - See `12020a4` for the code diff; B5/B6/B7 stubs in the follow-up-bug-tasks
   subsection.
 
-**T2.5: FMA-contraction guard for FF.**
+**T2.5: FMA-contraction guard for FF. (DONE)**
 
 - Same as T1.5 but for FF. Precedent: `test_ffmul.cpp` compiles with
   `-ffloat-store` for this reason.
+
+- Executed 2026-08-03. Commit `PENDING` (task); DONE block + docs-pointer follow.
+  Closes Phase 2 (7 of 7 tasks).
+- **`tests/ff_fma_guard_test.cpp` (new, 514 LOC).** Layer-5 positive test of the
+  FMA-contraction posture T2.1 adopts defensively, the FP32 analogue of T1.5
+  (`dd_fma_guard_test`). Builds the identical FF Dekker `twoProduct` (mirrored from
+  `ff_math.hpp:193-207` / `two_prod` 266-274, copied verbatim from `ff_eft_test.cpp`
+  per rule "tests are standalone; duplication is acceptable"; splitter `8193.0f` =
+  2¹³+1 for FP32's 24-bit mantissa) under BOTH contraction settings and cross-checks
+  against a contraction-immune oracle. `twoSum` is included as a labeled CONTROL (no
+  mul-then-± adjacency → contraction-immune → must stay exact both ways). Structure
+  mirrors T1.5 verbatim: single-source/two-targets, `KOKKOS_EP_CONTRACTION_MODE`
+  (0 = OFF/gate, 1 = ON/report) + `KOKKOS_EP_BASELINE_PATH` (ON only), OFF fail-gates
+  (`KOKKOS_EP_ASSERT F == 0`), ON reports (exits 0, baseline drift check). `ff_math.hpp`
+  / `ff_complex.hpp` NOT modified (rule 4).
+- **Test structure.** FF Dekker `twoProduct` bit-exact check `a*b == hi + lo` on
+  **220,410 in-domain checks** (110,205 host + 110,205 device — 10⁵ random in
+  `[-1e18f, 1e18f]` + corpus cross-product, each pair filtered by an FP32-narrowed
+  `prod_in_domain`); plus a `twoSum` CONTROL over the same input list with an
+  FP32-specific oracle-faithful guard (see deviation 2). Both variants registered:
+  `kokkos_ep_add_eft_test(ff_fma_guard_test)` (OFF) and
+  `kokkos_ep_add_eft_test_contract_on(ff_fma_guard_test)` (ON, suffixed target).
+- **Acceptance-gate results.** Contraction-off variant: **PASS, 0 misses**
+  (`twoProduct` 0 mismatches host + device; `twoSum` control 0 mismatches). Contraction-
+  on variant: **PASS reporter, `F = 0`**, baseline armed. Both variants register in
+  ctest (**#15 `ff_fma_guard_test`, #16 `ff_fma_guard_test_contract_on`**) and both
+  show **Passed** at the ctest-summary level. **ctest: 14 pass / 2 fail** — the 2 REDs
+  are the deliberately-preserved `dd_accuracy_test` (T1.4: erf 24.64 / erfc 19.50 /
+  tgamma 14.56 — digit-for-digit unchanged) and `ff_accuracy_test` (T2.4: erf 3.94 /
+  erfc 3.91 / tgamma 6.10 — digit-for-digit unchanged). Both FF demos
+  (`kokkos_ep_demo_ff`, `kokkos_ep_demo_ff_complex`) build and run RC 0. `cmake --build`
+  clean, zero warnings from `ff_fma_guard_test.cpp`; zero unexpected diagnostic prints.
+- **Deviation 1 — contraction-ON variant is a REPORTER, not `WILL_FAIL`.** The drafted
+  T2.5 prompt guessed the ON variant would flag `> 0` mismatches and register `WILL_FAIL`.
+  That is not T1.5's actual shape: T1.5's ON variant is a **reporter** because GCC 13.3.0
+  on baseline x86-64 emits plain mul+sub and contracts nothing → `F = 0` for DD. The FF
+  Dekker `twoProduct` is the same algorithm at FP32 on the same toolchain and behaves
+  identically: **`F = 0`**. This is a T1.5-verbatim mirror, not a weakening — the guard's
+  realness is proven by T1.5's separate *sensitivity* check (a deliberately-broken
+  `twoProduct` flags ~95% of checks under the ON flags, yet still exits 0), not by
+  production compiler behavior. A representative failing input pair `> 0` **does not
+  exist on this toolchain** for either backend; claiming one would be fabrication. The
+  drafting error was corrected up front by the "read §T1.5 first" instruction.
+- **Deviation 2 — FP32-specific `twoSum` oracle guard (`sum_oracle_faithful`), no DD
+  counterpart.** The first build showed **84 `twoSum` "mismatches" under BOTH postures**
+  — posture-independent, so not a contraction effect but a real oracle limitation.
+  Root cause: T1.5's DD guard reuses its `twoProduct` input list for the `twoSum` control
+  unchanged, which is safe at FP64 scale but not at FP32. A product-domain pair like
+  `(FLT_MIN = 2⁻¹²⁶, 2²⁴)` has an in-range *product* (2⁻¹⁰², admitted by
+  `prod_in_domain`) yet an exact *sum* spanning 2²⁴ down to 2⁻¹²⁶ — **174 significant
+  bits**, far beyond the FP64 oracle's 53-bit mantissa. The FP32 `twoSum` is **correct**
+  there (`hi = 2²⁴`, `lo = 2⁻¹²⁶`, both representable and non-overlapping); it is the
+  FP64 *decomposition oracle* that collapses the tiny tail (`(double)a + (double)b`
+  rounds the addend away → `lo == 0`), so the exact FP32 `lo` looks like a false
+  "mismatch". Fix: the control skips pairs the oracle cannot witness — a pair is in
+  domain only when the FP64 `twoSum` error term is zero (the double sum carries no
+  rounding). This is the EFT skip-not-fail discipline applied to the *oracle*, excluding
+  ONLY wide-exponent sums, never a pair where FP32 `twoSum` is actually wrong. After the
+  guard: 0 `twoSum` mismatches. `twoProduct` needs no such guard — its exact product is
+  always ≤48 bits, so the FP64 oracle is unconditionally faithful (confirmed: 0
+  `twoProduct` mismatches over 220,410 checks).
+- **Deviation 3 — FP64 oracle, no quadmath gate (inherited from T2.1).** Ground truth is
+  plain **FP64**, not `__float128`: the exact FP32 product needs ≤48 bits, which fits
+  FP64's 53-bit mantissa, so the reference `(p, e)` decomposition is *algebraically
+  exact* — a stronger oracle than DD's quadmath, needing no external library. Both
+  variants therefore run **unconditionally** (no `KOKKOS_EP_HAVE_QUADMATH` gate, no
+  runtime SKIP-77), unlike DD's `dd_fma_guard_test` which SKIPs without LIBQUADMATH.
+  Same posture T2.1's `ff_eft_test` established.
+- **Baseline / CMake.** `tests/ff_fma_guard_baseline.txt` (new, 26 lines, first
+  non-comment line = `0`) armed for future regression detection: each ON run compares
+  its live count to the baseline and prints `baseline: OK` or `*** DRIFT ***` (WARN-only,
+  never a failure). Generalized the `kokkos_ep_add_eft_test_contract_on` helper to derive
+  the baseline path from the target name (`<base>_baseline.txt`), replacing T1.5's
+  hardcoded `dd_fma_guard_baseline.txt` — so the DD and FF guards share one helper
+  (touches the DD path too; `tests/CMakeLists.txt` **+15/−1**). `tests/README.md`
+  **+60**: two registry rows + "FF FMA-contraction guard (Layer 5, Phase 2)" section.
+- **Scope-out.** FF Dekker `twoProduct` ONLY (the one contraction-hazard primitive); no
+  complex, no other ops; no rebuilding Kokkos under different contraction settings
+  (per-target flags suffice). No new B-task stubs — 0 misses, nothing to log.
+  `ff_math.hpp` / `ff_complex.hpp` untouched; demos untouched.
+- Depends on T0.1, T0.2, T2.0, T2.1.
+- **Closes Phase 2. 7 of 7 tasks DONE:** T2.0 (`dad92ef`), T2.1 (`4e025b0`),
+  T2.2 (`f56cc2c`), T2.3 (`c49572b`), T2.4 (`12020a4`, RED-by-design), T2.5
+  (`e293de7`), T2.6 (`6cb2211`). Follow-up bug tasks B4/B5/B6/B7 logged for
+  post-Phase-3 fixes.
+- See `e293de7` for the code diff and this DONE block for the outcome. Phase 2
+  complete; Phase 3 (QF from scratch) next.
 
 **T2.6: End-to-end cancellation kernels for FF. (DONE)**
 
