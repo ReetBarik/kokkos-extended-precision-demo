@@ -1411,7 +1411,7 @@ T1.4's DD B1/B2/B3).
 
 - Same kernels as T1.6, expect ~14 digits accuracy.
 
-- Executed 2026-08-03. Commit `6cb2211` (task); DONE block + docs-pointer follow.
+- Executed 2026-08-03. Commit `6cb2211` (task); DONE block + docs-pointer `d144394`.
   **Note: executed out of plan-doc order** — this is T2.6 (end-to-end cancellation
   kernels, the T1.6 analogue); T2.5 (FMA-contraction guard for FF, the T1.5
   analogue) remains the final open Phase-2 task. Prompt-labeling artifact (the task
