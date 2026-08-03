@@ -801,13 +801,14 @@ follow-up bug tasks B1/B2/B3 below.
 - **Scope-out.** No `dd_complex.hpp`, no FF/QF backends, no per-op differential
   accuracy (that is the T1.4 sibling). `dd_math.hpp` untouched; demos untouched.
 
-### Follow-up bug tasks (from T1.4 and T2.3)
+### Follow-up bug tasks (from T1.4, T2.3, and T2.4)
 
 Real extended-precision library defects surfaced by the property/accuracy tests
-(B1–B3 from T1.4's `dd_accuracy_test`; B4 from T2.3's `ff_property_test`). Each is
-a library-side fix (rule 4: the surfacing task reported, did not patch). The
-corresponding test is the durable acceptance gate. Pick up in any order after
-Phase 2/3, not now; these are stubs, one screenful each.
+(B1–B3 from T1.4's `dd_accuracy_test`; B4 from T2.3's `ff_property_test`; B5–B7
+from T2.4's `ff_accuracy_test`). Each is a library-side fix (rule 4: the surfacing
+task reported, did not patch). The corresponding test is the durable acceptance
+gate. Pick up in any order after Phase 2/3, not now; these are stubs, one
+screenful each.
 
 **B1: `tgamma` — Lanczos coefficients at DD precision.**
 
@@ -879,6 +880,61 @@ Phase 2/3, not now; these are stubs, one screenful each.
   FFEXP iteration-limit prints during the B3/B9 pass.
 - **Scope-out.** exp eps only (not sin/cos/asin/etc. — if those have
   the same porting artifact, log as B5/B6/etc.).
+
+**B5: FF `erf` — asymptotic branch broken + FP32 Taylor overflow.**
+
+- **Read first:** `ff_math.hpp:694` (erf, both branches — the large-|z|
+  asymptotic branch in particular); `tests/ff_accuracy_test.cpp` erf row; B3 (DD
+  sibling — shared asymptotic-region concern); this block.
+- **Root cause.** erf returns **NaN across the smooth well-conditioned range
+  ~[1.9, 6]** (mean 3.94, min 0.00). Two failures compound at FP32: (a) the Taylor
+  branch overflows earlier than DD does because FP32's exponent range is ~10³⁸ vs
+  FP64's ~10³⁰⁸, so intermediate term products blow up at |z|~2 rather than the DD
+  Taylor's clean cutoff; (b) the large-|z| asymptotic branch is broken (same defect
+  DD's B3 flags, port-inherited).
+- **Fix.** Same shape as B3 (repair/replace the large-|z| asymptotic expansion),
+  plus lower the Taylor→asymptotic switchover threshold to well inside FP32's
+  overflow-safe region. Likely shares the asymptotic-region code path with B6 (as
+  B3 shares with B2).
+- **Acceptance gate.** `ff_accuracy_test` erf mean ≥ 8.45; full ctest green; no
+  other op regresses; verify erf(2.0) is finite and matches the oracle to ≥ FF's
+  precision floor.
+- **Scope-out.** erf both branches only; coordinate with B6.
+
+**B6: FF `erfc` — direct computation for large |z|.**
+
+- **Read first:** `ff_math.hpp:738` (erfc = `subtract(1, erf(z))`); B2 (DD sibling
+  — direct-large-|z| pattern); B5 (upstream erf NaN blocker + shared asymptotic
+  path); `tests/ff_accuracy_test.cpp` erfc row.
+- **Root cause.** `erfc(z) = subtract(1, erf(z))` inherits B5's NaN when erf itself
+  returns NaN, plus catastrophic cancellation as erf(z) → 1 (the B2 pattern,
+  compounded). Mean 3.91, min 0.00.
+- **Fix.** Direct asymptotic/continued-fraction erfc for |z| above a threshold
+  (same shape as B2), likely shares the asymptotic-region code path with B5's
+  repaired branch. Downstream of B5 — restore erf first, then measure erfc, then
+  decide whether the direct erfc path is still needed.
+- **Acceptance gate.** `ff_accuracy_test` erfc mean ≥ 8.45; full ctest green; no
+  other op regresses.
+- **Scope-out.** erfc path only; cross-reference B5.
+
+**B7: FF `tgamma` — Lanczos coefficients at FF precision.**
+
+- **Read first:** `ff_math.hpp:749` (Lanczos coefficients, `c1=676.5203681218851f`,
+  …); B1 (DD sibling — same defect, DD-flavored); `tests/ff_accuracy_test.cpp`
+  tgamma row; this block.
+- **Root cause.** Uniformly ~6 digits (mean 6.10, min 5.94, flat across
+  [1e-3, 23)). The Lanczos g=7 coefficients are stored as `float` literals, capping
+  the accumulator at FP32's ~7-digit ceiling regardless of the enclosing FF
+  arithmetic. Worse than DD's B1 case because FF's mantissa is 24 bits vs DD's 53,
+  so the coefficient-truncation penalty is more severe.
+- **Fix.** Promote the Lanczos coefficients to FF-precision constants — compute
+  once to ~14+ digits and hardcode as `FloatFloat` pairs (analogous to DD's B1 fix
+  template, via `FloatFloat::from_bits(hi, lo)` or the FF equivalent constructor).
+  Preference: option (a) from B1 (keep the Lanczos structure, promote coefficient
+  precision).
+- **Acceptance gate.** `ff_accuracy_test` tgamma mean ≥ 8.45; full ctest green; no
+  other op regresses.
+- **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
 
 ### Phase 2 — FF validation (6 tasks)
 
@@ -1262,7 +1318,7 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
   the follow-up-bug-tasks subsection.
 - Depends on T0.2, T1.3, T2.0, T2.1.
 
-**T2.4: Differential accuracy for FF vs quadmath.**
+**T2.4: Differential accuracy for FF vs quadmath. (DONE, RED)**
 
 - Per-op `max(rel_err / u²)` where `u = 2⁻²⁴`.
 - For FF, published bounds from CAMPARY / Joldes-Muller-Popescu apply
@@ -1271,6 +1327,80 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 - Report min AND mean; annotate PORT_NOTES §5 conditioning-limited
   ops as expected-min-drops.
 - Expected mean: 13.3–14.0 digits per PORT_NOTES.
+
+`(DONE, RED)` is deliberate, exactly as in T1.4: the task shipped its deliverable
+(the test) and the test is doing its job — it flags three REAL `ff_math.hpp`
+accuracy defects and fails on them. The red is the point; it is the durable
+regression gate for the follow-up bug tasks B5/B6/B7 below (the FF siblings of
+T1.4's DD B1/B2/B3).
+
+- Executed 2026-08-03. Commit `12020a4` (task); DONE block + three B-task stubs
+  (B5/B6/B7) + subsection rename + docs-pointer follow.
+- **`tests/ff_accuracy_test.cpp` (new, 816 LOC).** Layer-4 per-op differential
+  accuracy vs the `__float128` oracle, the FF analogue of `dd_accuracy_test`
+  (T1.4). Mirrors that test's structure verbatim; the mechanical changes are the
+  precision scale (`u = 2⁻²⁴`, `u² = 2⁻⁴⁸`, digits capped at 14, mean-gated at
+  ~8.45) and the FP32-narrower op domains taken **verbatim from T2.2**
+  (`ff_invariant_test`: exp guards at `a.hi≥88` not DD's 300, trig carries a
+  tiny-arg lower bound, sinh/cosh cap at |x|<40, tanh at |x|<20, log window
+  `[1e-34,1e34]`, erf/erfc `[-6,6]`, tgamma `[1e-3,23)`), with the FP32 corpus
+  accessors (`corpus::unary<float>` / `<float>` named accessors). Shared
+  PORT_NOTES §5 registry → EXPECTED-MIN-DROP (conditioning is a property of the
+  algorithm, not the width, so DD and FF read the same table). Whole file
+  `KOKKOS_EP_HAVE_QUADMATH`-guarded; SKIP (77) without quadmath. Registered with
+  the plain `kokkos_ep_add_test` helper (not an EFT test).
+  **`tests/CMakeLists.txt` (+5) / `tests/README.md` (+62) (edit).**
+- **Op inventory — same ~50-row set as T1.4/T2.2, verbatim** (see the T1.2/T1.4
+  DONE blocks for the full enumeration; not duplicated here). Categories: unary
+  (abs…tgamma), two-output (sincos/sinhcosh, per component), binary (add…fdim),
+  ternary (fma), integer-scalar (pow_int).
+- **Tolerance rationale.** `tolerance_digits = −log₁₀(N · u²)` with u² = 2⁻⁴⁸ and
+  N = 10⁶ → **8.45**. Same formula as T1.4 / T2.3 Group B, computed at runtime
+  from `BackendTraits<FF>::u_squared`. Single uniform tolerance + the PORT_NOTES
+  §5 registry only — **no per-op tolerance overrides**.
+- **Results — 47 PASS, 3 FAIL (real signals, not test artifacts).** 50 ops total.
+  Mean-digit distribution: **34 ops at ~13.5–14.0**; **8 EXPECTED-MIN-DROP**
+  §5-sanctioned ops clear the 8.45 floor with low mins surfaced (exp
+  output-denormal lo; sin/cos/tan near ±π; asin/acos derivative→∞ near |a|=1;
+  atanh 1/(1−a²) near |a|=1; subtract/fdim/fma near-cancellation; remainder near
+  multiples of b); **3 FAIL**.
+  - **erf — mean=3.94 / min=0.00 / tol=8.45 FAIL.** Returns **NaN across the
+    smooth well-conditioned range ~[1.9, 6]** (`ff_math.hpp:694`). Two FP32
+    failures compound: the Taylor branch overflows far earlier than DD's (FP32
+    exponent range ~10³⁸ vs FP64 ~10³⁰⁸), and the large-|z| asymptotic branch is
+    broken (port-inherited, same defect DD's B3 flags). Logged as **B5** below.
+  - **erfc — mean=3.91 / min=0.00 / tol=8.45 FAIL.** `erfc(z)=subtract(1, erf(z))`
+    (`ff_math.hpp:738`) inherits erf's NaN plus catastrophic cancellation as
+    erf(z) → 1 (the T1.4 B2 pattern, compounded). Logged as **B6** below.
+  - **tgamma — mean=6.10 / min=5.94 / tol=8.45 FAIL.** Uniformly ~6 digits, flat
+    across [1e-3, 23). Lanczos g=7 with **FP32** coefficient constants
+    (`ff_math.hpp:749`: 676.5203681218851f, …) caps the accumulator at FP32's
+    ~7-digit ceiling regardless of the enclosing FF arithmetic — worse than DD's
+    B1 (24-bit mantissa vs 53-bit). Logged as **B7** below.
+  - The three failures were verified **library-side, not oracle-side**, by an
+    independent standalone probe (separate TU calling quadmath `erfq`/`erfcq`/
+    `tgammaq` directly) that reproduced clean oracle values across the failing
+    ranges (erf(2)=0.995…, tgamma(5)=24); the same oracle machinery scores 47
+    other ops at ~13.5–14.0, so oracle and domains are sound.
+- **Rule 4 posture.** `ff_math.hpp` / `ff_complex.hpp` NOT modified. The three
+  failures are real defects and stay flagged RED in the shipped test until
+  B5/B6/B7 land; the test is the durable regression gate for those fixes. The
+  failing ops are NOT skipped/disabled/xfailed.
+- **Acceptance-gate results.** Build clean, zero warnings from
+  `ff_accuracy_test.cpp`; `ctest` **11/13 green**. The only two REDs are
+  `ff_accuracy_test` (new, this task) and `dd_accuracy_test` (the
+  deliberately-preserved T1.4 RED: erf 24.64 / erfc 19.50 / tgamma 14.56 —
+  digit-for-digit unchanged, no regression); all previously-passing tests
+  including `ff_property_test` still green. Both FF demos (`kokkos_ep_demo_ff`,
+  `kokkos_ep_demo_ff_complex`) build and run cleanly (RC 0). **Zero** FFEXP /
+  FFCSSNR / FFNINT (or any) diagnostic prints during the run.
+- **Scope-out.** Real FF ops only — no `ff_complex.hpp`; no DD/QF; no MPFR; no new
+  corpus categories; no per-op tolerance overrides. Op inventory not re-derived
+  (taken from T2.2). PORT_NOTES §5 not modified (the 8 low-min ops are sanctioned
+  by the existing registry).
+- Depends on T0.1, T0.2, T2.0, T2.1.
+- See `12020a4` for the code diff; B5/B6/B7 stubs in the follow-up-bug-tasks
+  subsection.
 
 **T2.5: FMA-contraction guard for FF.**
 
