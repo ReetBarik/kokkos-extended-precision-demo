@@ -168,6 +168,18 @@ kokkos_ep_add_test(ff_property_test)
 # dd_accuracy_test. Plain helper — NOT an EFT test, so no contraction flags
 # (mirrors dd_accuracy_test's registration).
 kokkos_ep_add_test(ff_accuracy_test)
+# T2.5 end-to-end cancellation kernels for FF: quadmath-oracle-gated, host-side.
+# FF analogue of dd_e2e_test (T1.6). Plain helper — NOT an EFT test, so no
+# contraction flags. NOTE ON CONTRACTION: unlike T1.6's dd_e2e_test (which also
+# used the plain helper), K1's naive form sqrt(x²+1)-x contains a mul-then-sub
+# adjacency an FMA *could* contract. That is intentionally left to the project's
+# normal flags here for two reasons: (1) K1_naive is REPORTED, never gated, so a
+# contraction-induced shift in its (already ~0-digit) result cannot flip a
+# pass/fail; (2) the GATED path is K1_stable = 1/(sqrt(x²+1)+x), which has no
+# subtractive-cancellation adjacency to contract. So this test mirrors
+# dd_e2e_test's registration exactly (no EFT helper) — the contraction hazard the
+# EFT helper guards (Dekker twoProduct's a1*b1-c11) is not on any gated path here.
+kokkos_ep_add_test(ff_cancellation_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)

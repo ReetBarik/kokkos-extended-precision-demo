@@ -38,6 +38,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_accuracy_test` | T1.4        | Differential accuracy vs `__float128`: per-op digits of accuracy over 10⁶ random + corpus; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 25.91; PORT_NOTES §5 conditioning-limited ops report **EXPECTED-MIN-DROP** (gated on mean, not min); runtime-SKIPs without LIBQUADMATH |
 | `ff_accuracy_test` | T2.4        | FF analogue of `dd_accuracy_test`: per-op digits of accuracy over 10⁶ random + corpus vs `__float128`; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 8.45 (u=2⁻²⁴, cap 14); FP32-narrower op domains from T2.2; shared PORT_NOTES §5 registry → **EXPECTED-MIN-DROP**; runtime-SKIPs without LIBQUADMATH |
 | `dd_e2e_test`     | T1.6         | End-to-end cancellation kernels: √(x²+1)−x, Σ1/k², Machin's π, alternating harmonic — all quadmath-oracle-gated |
+| `ff_cancellation_test` | T2.5    | FF analogue of `dd_e2e_test`: same four cancellation kernels (√(x²+1)−x, Σ1/k², Machin's π, alternating harmonic) scored in digits vs `__float128`/closed-form oracles; **mean-gated at 14−3 = 11.0** (FF's cap minus headroom); K1 naive-vs-stable compares FF against **FP32** (FF's base scalar) at x∈{1e2,1e4,1e6}; runtime-SKIPs without LIBQUADMATH |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 
@@ -588,6 +589,76 @@ to that baseline and prints `baseline: OK` or `*** DRIFT ***` (a warning, never 
 failure — investigate, then update the file if the new value is correct for the new
 toolchain). **Scope:** the Dekker `twoProduct` only — the one DD primitive where
 contraction is a documented hazard.
+
+## End-to-end cancellation kernels (Layer 6)
+
+Layer 6 (`dd_e2e_test`, **T1.6**) is the payoff the end user actually cares about.
+Layers 1-5 validated a backend's atoms (EFT), structure (non-overlap), identities,
+per-op accuracy, and FMA-contraction posture — all machinery. Layer 6 asks: on
+classic **cancellation-hostile** problems that the base scalar mangles, does the
+double-word backend deliver its advertised digits? Four kernels, each with a known
+higher-precision or closed-form oracle:
+
+- **K1:** `√(x²+1) − x` — catastrophic cancellation at large `x`
+  (`√(x²+1) ≈ x`, the answer `~1/(2x)` lives in the surviving low bits).
+- **K2:** `Σ 1/k²`, k=1..10⁶ — Basel problem, closed form `π²/6`.
+- **K3:** Machin's `π = 16·atan(1/5) − 4·atan(1/239)` — transcendental composition.
+- **K4:** `Σ (−1)^(k+1)/k`, k=1..10⁶ — alternating harmonic, closed form `ln 2`.
+
+**Two-oracle strategy (K2, K4).** Each finite sum is scored twice. The
+sum-vs-**quadmath-partial-sum** comparison (identical N, order, terms) carries the
+**arithmetic-precision** claim — it isolates accumulation quality from truncation.
+The sum-vs-**closed-form** comparison (K2 vs π²/6, K4 vs ln 2) is a
+**truncation-limited sanity check**, gated at `truncation_floor − 1`; at N=10⁶ the
+floor is ~6 digits (the Basel tail and the alternating-series error are both ≈ 1/N).
+
+**K1 deviation (documented, both backends).** The literal spec named naive
+`√(x²+1) − x` as the DUT expecting full precision; that expectation is numerically
+false and **not** a library defect — cancellation loses ~2·log₁₀(x) digits
+regardless of arithmetic (Higham §1.7). So K1 ships as a **gated** stable form
+`1/(√(x²+1) + x)` (algebraically cancellation-free) plus a **reported, not gated**
+naive form (backend vs base scalar, per magnitude) that demonstrates the
+extra-word lift under the hostile algorithm.
+
+Both kernels are **host-side** (inherently serial reductions/recurrences), whole
+file `#ifdef KOKKOS_EP_HAVE_QUADMATH` (SKIP 77 without quadmath), and neither
+modifies the backend math header (rule 4). Registered with the plain
+`kokkos_ep_add_test` helper (not an EFT test).
+
+**DD (T1.6).** Gate `mean_digits ≥ 28.0` (= DD's cap 31 − 3 headroom). K1 uses
+x ∈ {1e6, 1e10, 1e15} and reports naive DD vs **FP64** (DD's base scalar). Measured
+means: `K1_stable` 31.00 (capped), `K2` 29.48, `K3` 28.09, `K4` 29.56 — all PASS.
+
+### FF end-to-end cancellation (Layer 6, Phase 2)
+
+`ff_cancellation_test.cpp` (**T2.5**) is the FF analogue of `dd_e2e_test.cpp`,
+mirroring its structure verbatim (same four kernels, same two-oracle strategy, same
+K1 gated-stable + reported-naive shape, host-side, quadmath-gated, `ff_math.hpp`
+untouched). The substantive changes are the **precision scale** and two
+**FP32-forced K1 deviations**, both derived (not fabricated) and reported in-source:
+
+- **Gate.** `mean_digits ≥ 11.0`, derived by the **same "cap − 3" formula** T1.6
+  used: FF's harness cap is `BackendTraits<FF>::max_digits = 14` (u² = 2⁻⁴⁸ ≈ 14.45
+  decimal digits), so `14 − 3 = 11.0`. Computed from `max_digits` at compile time,
+  not hardcoded.
+- **K1 baseline = FP32, not FP64.** T1.6 compared naive-DD against naive-FP64 (DD's
+  1-word base). The faithful FF mirror compares naive-FF against naive-**FP32** (FF's
+  1-word base). Comparing FF against FP64 would be dishonest — FP64 (~16 digits) is
+  *wider* than FF (~14), so it would "win" the naive contest while saying nothing
+  about FF. FF's advantage is over its own base scalar, exactly as DD's is over FP64.
+- **K1 magnitudes {1e2, 1e4, 1e6}, not {1e6, 1e10, 1e15}.** The cancellation
+  gradient lives ~3 decades lower for FF: plain FP32 loses the `+1` in `x²+1` once
+  `x² > 2²⁴` (x ≳ 4100) and FF loses it once `x²` exceeds FF's ~14-digit reach
+  (x ≳ 1e7). At T1.6's magnitudes both naive forms would read 0 at the upper two x —
+  no gradient. At {1e2,1e4,1e6} the FP32→FF lift is visible across the whole sweep.
+
+K2/K4 keep N = 10⁶: at that N the smallest term (1/N = 1e-6 for K4, 1e-12 for K2)
+stays well above FF's running-sum resolution, so no term stalls into the precision
+floor and the arithmetic-precision comparison is well-posed (the iteration-bound
+concern the plan flags for FP32 does not bite here). Per-kernel measured results
+are printed by the test and recorded in the T2.5 DONE block. Registered with the
+plain `kokkos_ep_add_test` helper (no contraction flags — see the CMake comment on
+why K1's naive mul-then-sub adjacency is not a gated-path hazard).
 
 ## Framework
 
