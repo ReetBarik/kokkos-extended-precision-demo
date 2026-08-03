@@ -128,9 +128,14 @@ function(kokkos_ep_add_eft_test_contract_on name)
   endif()
 
   # Contraction-ON mode (report, don't gate) + baseline path for drift detection.
+  # Baseline file is per-test: <base>_baseline.txt where <base> = name with the
+  # trailing "_test" stripped (dd_fma_guard_test -> dd_fma_guard_baseline.txt,
+  # ff_fma_guard_test -> ff_fma_guard_baseline.txt). Generalized from the original
+  # hardcoded dd_ path so T2.5's FF guard reuses this helper unchanged.
+  string(REGEX REPLACE "_test$" "" _base "${name}")
   target_compile_definitions(${tgt} PRIVATE
     KOKKOS_EP_CONTRACTION_MODE=1
-    KOKKOS_EP_BASELINE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/dd_fma_guard_baseline.txt")
+    KOKKOS_EP_BASELINE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/${_base}_baseline.txt")
 endfunction()
 
 # --- Registered tests -----------------------------------------------------
@@ -183,3 +188,11 @@ kokkos_ep_add_test(ff_cancellation_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)
+# T2.5 FMA-contraction guard for FF: FF analogue of T1.5, same source/two-postures
+# dual-registration pattern (see ff_fma_guard_test.cpp). Reuses the SAME helpers as
+# dd_fma_guard_test — the only per-variant knobs are the compile definitions the
+# helpers set; the ON helper derives ff_fma_guard_baseline.txt from the target name.
+# Unlike the DD guard, the FF source uses an FP64 oracle (exact, no LIBQUADMATH), so
+# both variants run unconditionally (no quadmath gate / SKIP-77).
+kokkos_ep_add_eft_test(ff_fma_guard_test)              # -> ff_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(ff_fma_guard_test)  # -> ff_fma_guard_test_contract_on  (ON, reports)

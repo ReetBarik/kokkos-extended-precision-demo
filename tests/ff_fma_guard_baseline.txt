@@ -1,0 +1,26 @@
+# ff_fma_guard_test contraction-ON baseline (T2.5)
+#
+# The FIRST non-comment line below is the recorded number of Dekker-twoProduct
+# mismatches observed by ff_fma_guard_test_contract_on (the -ffp-contract=fast /
+# --fmad=true build). It is historical data, not a pass/fail gate: the ON variant
+# always exits 0. On each run the ON variant compares its live count against this
+# number and prints "baseline: OK" if unchanged or "*** DRIFT ***" if it differs.
+#
+# Drift means the compiler's contraction behavior changed since this was recorded
+# (a compiler upgrade, a new -march/ISA target that gained FMA, or a flag change).
+# That is a WARNING to investigate, not a failure. If the new value is correct for
+# the new toolchain, update the number below.
+#
+# This is the FF analogue of tests/dd_fma_guard_baseline.txt (T1.5). Note the FF
+# guard's oracle is exact FP64 (48 <= 53 bits), not __float128, so it needs no
+# LIBQUADMATH and both variants run unconditionally.
+#
+# Recorded environment:
+#   compiler : GCC 13.3.0 (x86_64-suse-linux), -O3 -ffp-contract=fast
+#   ISA      : baseline x86-64 (no -mfma / -march=native), so no FMA emitted
+#   Kokkos   : 5.1.0, Serial backend
+#   result   : 0 mismatches — GCC did NOT contract `a1*b1 - p` on this ISA target
+#              (same outcome as the DD guard; on this toolchain -ffp-contract=off
+#               is belt+suspenders. The FP32 Dekker twoProduct is bit-exact over
+#               220,410 in-domain checks on host + device under both postures.)
+0

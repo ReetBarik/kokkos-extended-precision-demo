@@ -41,6 +41,8 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `ff_cancellation_test` | T2.5    | FF analogue of `dd_e2e_test`: same four cancellation kernels (√(x²+1)−x, Σ1/k², Machin's π, alternating harmonic) scored in digits vs `__float128`/closed-form oracles; **mean-gated at 14−3 = 11.0** (FF's cap minus headroom); K1 naive-vs-stable compares FF against **FP32** (FF's base scalar) at x∈{1e2,1e4,1e6}; runtime-SKIPs without LIBQUADMATH |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
+| `ff_fma_guard_test` | T2.5 | FF analogue of `dd_fma_guard_test`, **contraction OFF** — same Dekker `twoProduct` (splitter `8193.0f` = 2¹³+1) built `-ffp-contract=off`; **fail-gates** on any mismatch. **FP64 oracle** (exact — 48-bit product fits FP64's 53-bit mantissa), so runs **unconditionally** (no LIBQUADMATH gate, no SKIP-77) |
+| `ff_fma_guard_test_contract_on` | T2.5 | FF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `ff_fma_guard_baseline.txt` |
 
 ## How to run
 
@@ -589,6 +591,64 @@ to that baseline and prints `baseline: OK` or `*** DRIFT ***` (a warning, never 
 failure — investigate, then update the file if the new value is correct for the new
 toolchain). **Scope:** the Dekker `twoProduct` only — the one DD primitive where
 contraction is a documented hazard.
+
+### FF FMA-contraction guard (Layer 5, Phase 2)
+
+`ff_fma_guard_test.cpp` (**T2.5**) is the FF analogue of `dd_fma_guard_test.cpp`,
+mirroring its structure verbatim: one source compiled into two targets under
+opposite contraction postures, a contraction-immune oracle, a `twoSum` **control**
+(no mul-then-± adjacency → must stay exact both ways), host + device passes, OFF
+gates / ON reports with a committed baseline. It reuses the **same** CMake helpers
+as the DD guard:
+
+```cmake
+kokkos_ep_add_eft_test(ff_fma_guard_test)              # -> ff_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(ff_fma_guard_test)  # -> ff_fma_guard_test_contract_on  (ON, reports)
+```
+
+The `_contract_on` helper derives the per-test baseline path
+(`ff_fma_guard_baseline.txt`) from the target name, so the DD and FF guards share
+one helper with no duplication.
+
+The FF Dekker `twoProduct` is the **same algorithm** at FP32: splitter `8193.0f`
+(2¹³+1), hi/lo split, the cross-term subtraction `a1*b1 - p`. The contraction
+hazard is identical — a fused `fma(a1, b1, -p)` computes the tail with
+full-precision residuals the algorithm's rounded-intermediate algebra does not
+assume, silently breaking the error term.
+
+**Two divergences from the DD shape, both reported (see the T2.5 DONE block):**
+
+- **FP64 oracle, no quadmath gate.** Like `ff_eft_test` (T2.1), ground truth is
+  plain **FP64**, not `__float128`: the exact FP32 product needs ≤48 bits, which
+  fits FP64's 53-bit mantissa, so the reference `(p, e)` decomposition is
+  *provably* exact — a stronger oracle than DD's quadmath, needing no external
+  library. Consequently both variants run **unconditionally** (no
+  `KOKKOS_EP_HAVE_QUADMATH` gate, no runtime SKIP-77), unlike the DD guard which
+  SKIPs without LIBQUADMATH.
+- **`twoSum` control gets an FP32-specific oracle-faithfulness guard.** The DD
+  guard reuses its `twoProduct` input list for the `twoSum` control unchanged;
+  that is safe at FP64 scale but **not** at FP32. A pair like `(FLT_MIN = 2⁻¹²⁶,
+  2²⁴)` has an in-range *product* (2⁻¹⁰², admitted by the `twoProduct` domain) yet
+  an exact *sum* spanning 174 bits — far beyond the FP64 oracle's 53. There the
+  FP32 `twoSum` is **correct** (`hi = 2²⁴`, `lo = 2⁻¹²⁶`); it is the FP64
+  *decomposition* that collapses the tiny tail, so the exact `lo` looks like a
+  false "mismatch". The control therefore skips pairs the oracle cannot witness
+  (`sum_oracle_faithful`: the FP64 `twoSum` error term is zero ⇔ the double sum is
+  exact), excluding **only** wide-exponent sums, never a pair where FP32 `twoSum`
+  is actually wrong. `twoProduct` needs no such guard — its ≤48-bit product is
+  always oracle-faithful (confirmed: 0 mismatches).
+
+**Observed on this toolchain (GCC 13.3.0, baseline x86-64, no `-mfma`):** the FF
+Dekker `twoProduct` is bit-exact over **220,410** in-domain checks (host + device)
+under **both** postures — **`F = 0`**, the *same* outcome T1.5 recorded for DD.
+GCC emits plain mul+sub and contracts nothing on this ISA; `-ffp-contract=off` is
+belt+suspenders here, and the ON reporter's baseline (`0`) arms drift detection for
+a future toolchain where that stops being true. Because `F = 0`, the ON variant is
+a **reporter** (exits 0), not a `WILL_FAIL` test — matching
+`dd_fma_guard_test_contract_on` exactly (the guard's realness is proven by
+sensitivity, not by contraction on this compiler; T1.5 verified a deliberately-
+broken `twoProduct` flags ~95 % of checks). **Scope:** the Dekker `twoProduct`
+only; no complex, no other ops; `ff_math.hpp` NOT modified.
 
 ## End-to-end cancellation kernels (Layer 6)
 
