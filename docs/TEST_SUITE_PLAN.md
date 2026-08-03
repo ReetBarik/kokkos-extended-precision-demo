@@ -1407,9 +1407,86 @@ T1.4's DD B1/B2/B3).
 - Same as T1.5 but for FF. Precedent: `test_ffmul.cpp` compiles with
   `-ffloat-store` for this reason.
 
-**T2.6: End-to-end cancellation kernels for FF.**
+**T2.6: End-to-end cancellation kernels for FF. (DONE)**
 
 - Same kernels as T1.6, expect ~14 digits accuracy.
+
+- Executed 2026-08-03. Commit `6cb2211` (task); DONE block + docs-pointer follow.
+  **Note: executed out of plan-doc order** — this is T2.6 (end-to-end cancellation
+  kernels, the T1.6 analogue); T2.5 (FMA-contraction guard for FF, the T1.5
+  analogue) remains the final open Phase-2 task. Prompt-labeling artifact (the task
+  prompt said "T2.5" but its body unambiguously described the `dd_e2e_test`
+  analogue), not a scope change.
+- **`tests/ff_cancellation_test.cpp` (new, 413 LOC).** Layer-6 end-to-end test, the
+  FP32 analogue of T1.6 (`dd_e2e_test`): four classic cancellation-hostile kernels
+  evaluated in FF and scored in digits of accuracy against `__float128` /
+  closed-form oracles, mean-gated at 11.0 digits. Structure mirrors T1.6 verbatim;
+  the mechanical change is the precision scale (FF `max_digits = 14` vs DD's 31).
+  Whole file is `#ifdef KOKKOS_EP_HAVE_QUADMATH`; runtime-SKIP 77 without quadmath.
+  Host-side only (the kernels are inherently serial reductions/recurrences).
+  `ff_math.hpp` / `ff_complex.hpp` NOT modified (rule 4).
+- **Two-oracle strategy (K2, K4).** Same split as T1.6. The
+  FF-vs-quadmath-partial-sum comparison carries the arithmetic-precision claim:
+  identical N, identical summation order, identical terms, so it isolates FF's
+  accumulation quality from truncation. The FF-vs-closed-form comparison
+  (K2 vs π²/6, K4 vs ln 2) is a truncation-limited sanity check, gated at
+  `truncation_floor − 1` digit of slack. At N=10⁶ the floor is ~6 digits: the
+  Basel tail Σ_{N+1}^∞ 1/k² ≈ 1/N, and the alternating-series error is bounded by
+  the first omitted term ≈ 1/N.
+- **Tolerance rationale.** FF's harness cap is `BackendTraits<FF>::max_digits = 14`
+  (u² = 2⁻⁴⁸ ≈ 14.45 decimal digits); the SAME "cap − 3" formula T1.6 used gives
+  `14 − 3 = 11.0` (DD used `31 − 3 = 28.0`), leaving ~3 digits of headroom for
+  accumulated round-off in composed / 10⁶-term kernels, applied uniformly to the
+  arithmetic-precision comparisons. Computed from `max_digits` at compile time, not
+  hardcoded.
+- **Per-kernel results (mean_digits / tolerance 11.0).** `K1_stable` 14.00/14.00
+  (harness cap) — PASS; `K2_basel` 12.70 — PASS by +1.70; `K3_machin` 14.00
+  (harness cap) — PASS; `K4_alt_harmonic` 11.50 — PASS by +0.50. `K1_naive_report`
+  FF {10.27, 7.64, 8.60} vs FP32 {3.28, 0.00, 0.00} at x ∈ {1e2, 1e4, 1e6} — a
+  ~+7-to-+10-digit FF-over-FP32 lift. K2 sanity vs π²/6 6.22 digits (truncation
+  floor 6); K4 sanity vs ln 2 6.14 digits (truncation floor 6). **4 PASS / 0 RED.**
+- **K1 measurement deviations (justified; measurement wins over spec, per the T1.6
+  K1 precedent).** Two FP32-forced deviations from the literal T1.6 recipe, both
+  documented in-source and in the README, both preserving the test's intent:
+  (1) **Naive baseline = FP32, not FP64.** FF's demonstrable lift is over its
+  1-word base scalar (FP32, ~7 digits), symmetric to DD's lift over FP64. FP64
+  (~16 digits) is *wider* than FF (~14), so an FP64 baseline would be dishonest —
+  it would "win" the naive contest while saying nothing about FF. (2) **Magnitudes
+  {1e2, 1e4, 1e6}, not T1.6's {1e6, 1e10, 1e15}.** The cancellation gradient sits
+  ~3 decades lower at FP32: plain FP32 loses the "+1" in `x²+1` once `x² > 2²⁴`
+  (x ≳ 4100), so at T1.6's magnitudes both stable and naive read exactly 0 at the
+  FP32 base — no visible lift. At {1e2, 1e4, 1e6} the "+1" is retained in FF at all
+  three and the FP32→FF lift is visible across the whole sweep (FP32 naive
+  collapses to 0 at x ≥ 1e4, FF retains ~7-10 digits).
+- **K2/K4 iteration counts.** Kept at N = 10⁶ (no FP32 rescaling needed): at that N
+  the smallest term (1/N = 1e-6 for K4, 1e-12 for K2) stays well above FF's
+  running-sum resolution, so no term stalls into the precision floor — verified by
+  the clean 12.70 / 11.50 arithmetic-precision means; the FP32 iteration-bound
+  concern the plan flags does not bite here.
+- **Contraction posture.** Registered with the plain `kokkos_ep_add_test`
+  helper (mirroring `dd_e2e_test`), NOT the EFT helper. K1's naive `√(x²+1)−x` has
+  a mul-then-sub adjacency an FMA *could* contract, but K1_naive is
+  reported-not-gated, and the gated path K1_stable = `1/(√(x²+1)+x)` has no
+  subtractive-cancellation adjacency. The Dekker-`twoProduct` hazard the EFT helper
+  guards is on no gated path here; documented in the CMake comment.
+- **`tests/CMakeLists.txt` (+12).** `kokkos_ep_add_test(ff_cancellation_test)`.
+  **`tests/README.md` (+71).** Registry row + "FF end-to-end cancellation (Layer 6,
+  Phase 2)" section (DD baseline + FF Phase-2 subsection).
+- **Acceptance gate — all pass.** `cmake --build` clean, zero warnings from
+  `ff_cancellation_test.cpp`; `ctest` **12/14 green**, `ff_cancellation_test` #12
+  **Passed**, all 11 previously-passing tests still green. The only 2 REDs are the
+  deliberately-preserved `dd_accuracy_test` (T1.4: erf 24.64 / erfc 19.50 / tgamma
+  14.56 — digit-for-digit unchanged) and `ff_accuracy_test` (T2.4: erf 3.94 /
+  erfc 3.91 / tgamma 6.10 — digit-for-digit unchanged). Both FF demos
+  (`kokkos_ep_demo_ff`, `kokkos_ep_demo_ff_complex`) build and run cleanly (RC 0).
+  **Zero** `FFEXP` / `FFCSSNR` / `FFNINT` diagnostic prints in the whole run.
+- **Scope-out.** Real FF ops only — no `ff_complex.hpp`, no DD/QF backends, no
+  per-op differential accuracy (that is the T2.4 sibling). `ff_math.hpp` /
+  `ff_complex.hpp` untouched; demos untouched. No library defects surfaced — no new
+  B-tasks.
+- Depends on T0.1, T0.2, T2.0, T2.1.
+- See `6cb2211` for the code diff and this DONE block for the outcome; **T2.5
+  (FMA-contraction guard for FF) remains open as the final Phase-2 task.**
 
 ### Phase 3 — QF implementation + validation (8 tasks)
 
