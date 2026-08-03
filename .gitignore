@@ -10,3 +10,5 @@ PLAN_*.md
 # Standalone host tools compiled by g++ directly into scripts/ (not via cmake).
 scripts/gen_ff_constants
 scripts/test_ffmul
+scripts/gen_qf_constants
+scripts/test_qfmul
