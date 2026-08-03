@@ -1182,8 +1182,7 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 - Same identities as T1.3, adjusted for FF's ~14 digit precision.
 - No oracle needed.
 
-- Executed 2026-08-03. Commit `c49572b` (task); DONE block + docs-pointer this
-  commit and the next.
+- Executed 2026-08-03. Commit `c49572b` (task); DONE block + docs-pointer `1c4a59c`.
 - **`tests/ff_property_test.cpp` (new, 799 LOC).** Layer-3 algebraic-identity
   test, the FP32 analogue of T1.3 (`dd_property_test`): do the FF ops compose the
   way the algebra says? Structure mirrors T1.3 verbatim; the mechanical change is
