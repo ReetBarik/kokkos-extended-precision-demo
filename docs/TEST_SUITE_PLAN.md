@@ -954,16 +954,101 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
   byte-identical accuracy diff confirms it was non-behavioral.
 - Depends on T0.0, T0.3, T0.4, T0.5.
 
-**T2.1: EFT unit tests for FF.**
+**T2.1: EFT unit tests for FF. (DONE)**
 
-- Test `ffadd` twoSum and `ffmul` Dekker (splitter `8193.0f` = 2¹²+1).
-- Ground truth: **FP64** (provable — FP32 sum/product fits exactly in
-  FP64's 53-bit mantissa; 24+24=48 ≤ 53). This is a *stronger* oracle
-  than DD's quadmath because it's algebraically exact, not merely
-  higher-precision.
-- Port `scripts/test_ffmul.cpp` verbatim as the seed for this file,
-  then generalize to `ffadd` and to the corner corpus.
-- 10⁶ random + corpus.
+- Executed 2026-08-02. Commit `4e025b0`.
+- Layer-1 EFT test for FF, mirroring T1.1's shape (same four-corpora
+  coverage plus named hard cases and device parity). The one material
+  divergence is the oracle: plain **FP64** instead of quadmath —
+  algebraically exact rather than merely higher-precision, since the
+  exact FP32 sum (≤25 bits) and product (24+24 = 48 bits) both fit
+  inside FP64's 53-bit mantissa. That makes it a *stronger* oracle than
+  DD's quadmath (exact, not sub-ulp), so the test needs no LIBQUADMATH
+  and runs unconditionally. Total scored ~4.62M inputs, 0 failures
+  across all four test corpora.
+- **`tests/ff_eft_test.cpp` (new, 560 LOC).** Layer-1 EFT unit test for the
+  two error-free transforms every FF op is built on: the twoSum inside
+  `Kokkos::Experimental::add` and the Dekker twoProduct inside `multiply`
+  (splitter = `8193.0f = 2^13+1` for FP32's 24-bit mantissa; cited from
+  `ff_math.hpp:192`).
+- **EFT primitive extraction — mirror-and-comment.** Duplicated `two_sum` /
+  `two_prod_dekker` from `ff_math.hpp` `add`/`multiply` into the test file,
+  bit-identical to the embedded transforms when `.lo == 0.0f`. Same rationale
+  as T1.1: transforms are embedded in longer op sequences; EFT test wants the
+  transform of two RAW floats. `ff_math.hpp` NOT modified (rule 4).
+- **Ground truth `double` — provable, not approximate.** Exact FP32 sum ≤25
+  bits, exact FP32 product ≤48 bits, both well inside FP64's 53-bit mantissa,
+  so widening operands to `double` and computing sum/product in `double` is
+  exact. Asserts `(double)hi + (double)lo == (double)a {+,*} (double)b`
+  bit-exactly. **Stronger oracle than DD's quadmath** (exact, not sub-ulp).
+  No `KOKKOS_EP_HAVE_QUADMATH` guard; no runtime SKIP-77; runs unconditionally
+  on every build. This is the sole deliberate divergence from T1.1's shape.
+- **Coverage — ~4.62M inputs, 0 failures.** Test A (twoSum): 2,113,526 tested
+  / 335 skipped / 0 failures. Test B (Dekker twoProduct): 2,110,205 / 3,656 /
+  0. Test C (named hard cases including exact cancellation, both-subnormal,
+  ±0, `1.0f + 2^-24 → lo = 2^-24`): 14 passed / 1 skipped / 0 failed. Test D
+  (device parity via `parallel_for`, 200k inputs × 2 transforms = 400,000
+  scored): 400,000 / 0 / 0. Per-op broad random range: 1e30 for twoSum, 1e18
+  for twoProduct (deviation from prompt — see below).
+- **Out-of-domain inputs are SKIPPED, not failed.** Same posture as T1.1
+  with FP32-specific bounds: twoSum skips non-finite pairs and overflowing
+  sums; Dekker twoProduct additionally skips subnormal operands, splitter-
+  overflow magnitudes (`|x| ≥ FLT_MAX/(2^13+1) ≈ 2^114.9998`, derived from
+  `two_prod_dekker`'s first op `cona = a * 8193.0f`; empirically verified
+  2^114·8193 finite, 2^115·8193 = inf, matching PORT_NOTES §4a's exp
+  splitter-overflow mechanism at b~2^115), and products that overflow or
+  gradually underflow (error term subnormal — cite Dekker 1971; Muller et
+  al. HFPA §4.4; predicate evaluated on the exact `double` product, not the
+  rounded FP32 product, so underflowing pairs cannot masquerade as
+  in-domain). Underflow floor: `|p| ≥ 2^-102 = FLT_MIN·2^24`.
+- **Harness extension.** `tests/test_utils.hpp` gains
+  `BackendTraits<FF>` (+41 LOC), field-for-field mirror of `BackendTraits<DD>`:
+  `type = Kokkos::Experimental::FloatFloat`, `u = 2^-24`, `u_squared = 2^-48`,
+  `max_digits = 14` (capped at FP32-double-word precision, matching
+  `kMaxDigits` in `demo_ff_real.cpp`), `to_quad(x)` widener under the
+  quadmath guard. `struct FF{}` tag replaces the T0.2 TODO placeholder.
+  Included even though `ff_eft_test.cpp` does not consume the harness runners
+  (its FP64 oracle is self-contained) — unblocks T2.2/T2.3/T2.4/T2.6.
+- **CMake.** Registered via `kokkos_ep_add_eft_test(ff_eft_test)` — the
+  contraction-OFF helper T1.1 established. Verified `-ffp-contract=off`
+  reached the compile line via `flags.make`. No contraction-ON reporter
+  (T2.5's problem, mirroring T1.5's `dd_fma_guard_test_contract_on`).
+- **`tests/README.md` (+34 LOC).** Registry row + "FF EFT (Layer 1, Phase 2)"
+  section mirroring the T1.1 write-up shape.
+- **Acceptance gate — all pass.** `cmake --build` clean, zero warnings from
+  `ff_eft_test.cpp`; `ctest -V` 9/10 Passed — the single failure is the
+  deliberately-preserved T1.4 RED on `dd_accuracy_test` (erf 24.64 / erfc
+  19.50 / tgamma 14.56 vs tol 25.91, digit-for-digit unchanged, pending
+  B1/B2/B3); all 8 previously-passing DD tests still green; new `ff_eft_test`
+  Passed with 0 failures across A/B/C/D. Both FF demos (`kokkos_ep_demo_ff`,
+  `kokkos_ep_demo_ff_complex`) still build and run cleanly (RC 0) —
+  `BackendTraits<FF>` addition did not disturb them.
+- **Deviations (justified).** (1) Splitter is `2^13+1 = 8193.0f`, NOT
+  `2^12+1` as the T2.1 prompt and T2.0-inherited `ff_math.hpp:12` license
+  header state (`2^12+1 = 4097`, not 8193). Test mirrors the shipped
+  `8193.0f` and cites it correctly at `ff_math.hpp:192` (which reads
+  `2^13 + 1`). The stale `2^12+1` typo in `ff_math.hpp:12`'s license header
+  is fixed in THIS commit (docs-only, no arithmetic change, no rule-4
+  concern). (2) Per-op broad random range: 1e30 for twoSum, 1e18 for
+  twoProduct — FP32's 6×-narrower exponent range overflows nearly every
+  product at 1e30 (a·b = 1e60 ≫ FLT_MAX ≈ 3.4e38), giving vacuous coverage
+  (first build tested 1/1e6 twoProduct pairs, 0 device twoProduct pairs).
+  1e18 keeps products ≤1e36 < FLT_MAX and operands well below the splitter
+  bound. Rationale documented in-code via `broad_bound()`. (3) No
+  `KOKKOS_EP_HAVE_QUADMATH` guard — as prompted; the FP64 oracle is exact
+  and unconditional.
+- **Scope-out.** EFT primitives only (twoSum + Dekker twoProduct); no
+  higher-level ops (sqrt/exp/log/trig/transcendentals — T2.2/T2.4). No FF
+  complex EFTs (out of scope). No contraction-ON reporter (T2.5). No new
+  corpus categories (`corpus.hpp` already parametric per T0.2). No harness
+  runner extension beyond `BackendTraits<FF>`. No QF work. No B1/B2/B3
+  work. `ff_math.hpp` / `ff_complex.hpp` arithmetic bodies untouched
+  (rule 4).
+- **Bugs found in FF code.** None during the EFT test. One docs-only typo
+  in `ff_math.hpp`'s license header (`2^12+1` → `2^13+1`) fixed inline
+  in this commit; traced back to boilerplate inherited from the T2.0
+  prompt.
+- Depends on T0.2, T1.1, T2.0.
 
 **T2.2: Non-overlap invariant checks for FF.**
 

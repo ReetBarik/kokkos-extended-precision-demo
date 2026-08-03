@@ -9,7 +9,7 @@
 // coefficient tables descend from DDFUN v04 by David H. Bailey.
 //
 // FP32-specific modifications (input narrowing, splitter constant
-// 8193.0f = 2^12+1, joint sin/cos doublings, Taylor branches for
+// 8193.0f = 2^13+1, joint sin/cos doublings, Taylor branches for
 // |a|<0.5 in sinh/cosh/atanh, direct exp scaling to avoid splitter
 // overflow, nint magic-constant replacement) are documented in
 // PORT_NOTES.md. These modifications fall under DHB-License §3
