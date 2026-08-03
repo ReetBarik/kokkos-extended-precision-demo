@@ -801,13 +801,13 @@ follow-up bug tasks B1/B2/B3 below.
 - **Scope-out.** No `dd_complex.hpp`, no FF/QF backends, no per-op differential
   accuracy (that is the T1.4 sibling). `dd_math.hpp` untouched; demos untouched.
 
-### Follow-up bug tasks (from T1.4)
+### Follow-up bug tasks (from T1.4 and T2.3)
 
-Three real `dd_math.hpp` accuracy defects surfaced by T1.4's `dd_accuracy_test`
-(RED on these ops). Each is a library-side fix (rule 4: T1.4 reported, did not
-patch). `dd_accuracy_test` is the durable acceptance gate — a fix is done when
-its op clears the 25.91-digit mean. Pick up in any order after Phase 2/3, not
-now; these are stubs, one screenful each.
+Real extended-precision library defects surfaced by the property/accuracy tests
+(B1–B3 from T1.4's `dd_accuracy_test`; B4 from T2.3's `ff_property_test`). Each is
+a library-side fix (rule 4: the surfacing task reported, did not patch). The
+corresponding test is the durable acceptance gate. Pick up in any order after
+Phase 2/3, not now; these are stubs, one screenful each.
 
 **B1: `tgamma` — Lanczos coefficients at DD precision.**
 
@@ -857,6 +857,28 @@ now; these are stubs, one screenful each.
 - **Acceptance gate.** `dd_accuracy_test` erf mean ≥ 25.91; full ctest green; no
   other op regresses.
 - **Scope-out.** erf large-|z| branch only; coordinate with B2.
+
+**B4: FF `exp` — `eps` finer than FloatFloat resolution.**
+
+- **Read first:** `ff_math.hpp` exp body (locate the Taylor-series eps
+  constant); T2.3 DONE block's B3/B9 domain-narrowing note; PORT_NOTES
+  (may already document the DD→FF eps porting concern).
+- **Root cause.** FF `exp` uses `eps = 1e-15f` as the Taylor-series
+  convergence threshold; FloatFloat's precision is ~2^-48 ≈ 3.55e-15.
+  For large |x|, terms never fall below `eps` (because eps < FF ulp
+  in that magnitude regime), so the Taylor loop stalls, hits the
+  iteration limit, prints `FFEXP: iteration limit` on stdout, and
+  returns 0.0. Direct DD→FF port artifact — DD's eps was appropriate
+  for FP64 resolution, was not rescaled for FP32.
+- **Fix.** Promote `eps` to a FloatFloat-appropriate constant
+  (~2^-48 = 3.55e-15 or larger with the appropriate safety margin);
+  cite the eps derivation in comment. Verify convergence at
+  ±85 without iteration-limit stall.
+- **Acceptance gate.** T2.3's `ff_property_test` B3/B9 domain restored
+  to `[-85, 85]`; `ctest` green including the restored range; zero
+  FFEXP iteration-limit prints during the B3/B9 pass.
+- **Scope-out.** exp eps only (not sin/cos/asin/etc. — if those have
+  the same porting artifact, log as B5/B6/etc.).
 
 ### Phase 2 — FF validation (6 tasks)
 

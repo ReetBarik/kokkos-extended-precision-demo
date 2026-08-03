@@ -34,6 +34,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `ff_invariant_test` | T2.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** FF op, evaluated in **raw FP32**; FP32-narrower domain predicates derived from `ff_math.hpp`; oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
+| `ff_property_test` | T2.3        | FF analogue of `dd_property_test`: **Group A** bit-exact (7 identities, no oracle), **Group B** tolerance vs `__float128` (13 identities, **mean-gated** at −log10(N·u²) ≈ 8.45 for u=2⁻²⁴), **Test C** named-constant regressions (target ≥12 of FF's 14 digits); exp-guard-narrowed domains for the exp round-trips; runtime-SKIPs without LIBQUADMATH |
 | `dd_accuracy_test` | T1.4        | Differential accuracy vs `__float128`: per-op digits of accuracy over 10⁶ random + corpus; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 25.91; PORT_NOTES §5 conditioning-limited ops report **EXPECTED-MIN-DROP** (gated on mean, not min); runtime-SKIPs without LIBQUADMATH |
 | `dd_e2e_test`     | T1.6         | End-to-end cancellation kernels: √(x²+1)−x, Σ1/k², Machin's π, alternating harmonic — all quadmath-oracle-gated |
 | `dd_fma_guard_test` | T1.5       | FMA-contraction guard, **contraction OFF** — same Dekker `twoProduct` built `-ffp-contract=off`; **fail-gates** on any mismatch (stronger form of T1.1) |
@@ -426,6 +427,54 @@ Associativity of `add` and distributivity across large-magnitude cancellations
 are **false for any finite-precision format** (rounding is grouping-dependent) —
 asserting them would be testing IEEE rounding, not the DD port. Registered with
 the plain `kokkos_ep_add_test` helper (no contraction flags — not an EFT test).
+
+### FF property/identity (Layer 3, Phase 2)
+
+`ff_property_test.cpp` (**T2.3**) is the FF analogue of `dd_property_test.cpp`,
+mirroring its structure verbatim. The only substantive change is the **precision
+scale**: FF's unit roundoff is `u = 2⁻²⁴` (vs DD's `2⁻⁵³`), so
+`u² = 2⁻⁴⁸` and the statistical floor becomes
+`tolerance_digits = -log10(N·u²) ≈ 8.45` at `N = 10⁶` (vs DD's ≈ 25.91).
+Everything is computed at runtime from `BackendTraits<FF>::u_squared`, not
+hardcoded. Group B means land around 13 digits, clearing the ~8.45 floor with
+room to spare.
+
+**Group A (7 bit-exact).** Same identities as DD: `add(a,negate(a))==0`,
+`a-a==0`, `a·1==a`, `a·(-1)==negate(a)`, `abs` sign branches,
+`negate(negate(a))==a`, add commutativity. Failures dump raw FP32 bit patterns
+(`0x%08x` per limb). A1–A6 use full Route-A FF operands (`FloatFloat(double)`,
+generally **nonzero** `lo`); A8 (add commutativity) uses **single-float**
+operands (`lo==0`) — the FF analogue of DD's single-double convention: with a
+nonzero `lo`, `add()`'s trailing `+a.lo+b.lo` reorders under operand swap and
+would break bit-exactness. Multiply-by-±1 (A3/A4) is Dekker-domain-gated
+(`split_safe_max() = FLT_MAX/8193`), and any strict-`==` mismatch whose limbs
+land in the FP32 denormal tail (`< 2⁻¹⁰⁰`) is counted **skipped**, not failed
+(the T2.2 round-to-even hole).
+
+**Group B (13 tolerance).** Same identities as DD, mean-gated at ≈ 8.45. The
+exp round-trips narrow their domains to respect `ff_math.hpp`'s exp guard
+(`a.hi ≥ 88.0f` returns 0): B2 `exp(log(a))` on `[1e-30,1e30]`, B11 `pow(a,2)` on
+`[1e-15,1e15]` (`2·ln(1e15) ≈ 69 < 88`). B3 `log(exp(a))` and B9 `exp(a)·exp(-a)`
+are further narrowed to `[-69,69]` (from `[-85,85]`) per pending follow-up bug
+task **B4**: exp's Taylor convergence `eps=1e-15f` is finer than FloatFloat's
+`~3.55e-15` resolution, so for ~3 % of generic large-magnitude arguments exp
+stalls to its iteration cap, prints `FFEXP: iteration limit`, and returns 0
+(surfaced via `log()`'s internal Newton exp; results stay accurate but stdout is
+spammed). Restore to `[-85,85]` once B4 lands. B8 double-angle narrows to `|a| < 3` because it
+compares two *different* reduced arguments and FF's double-float argument
+reduction degrades for large `|a|` (PORT_NOTES §5). B0 is the demoted multiply
+commutativity.
+
+**Test C.** Target ≥ 12 of FF's 14 digits (DD used ≥ 30 of 31): `log(e)≈1`,
+`exp(log2)≈2`, `√2·√2≈2`, `log(10)≈log10` constant. C1 `|sin(π)|≈0` is softened
+to a conditioning-aware floor (arg reduction near π, PORT_NOTES §5); C6
+euler_gamma/digamma is skipped (no digamma op in `ff_math.hpp`).
+
+**Device pass.** 3 Group A (`A1`, `A3`, `A5`) + 2 Group B (`B1`, `B4`) on 10⁵
+inputs, with `View<float*>` limb transfer. Registered with the plain
+`kokkos_ep_add_test` helper (no contraction flags — identities are
+FMA-contraction agnostic). `ff_math.hpp`/`ff_complex.hpp` are **not** modified by
+this layer.
 
 ## FMA-contraction guard (Layer 5)
 

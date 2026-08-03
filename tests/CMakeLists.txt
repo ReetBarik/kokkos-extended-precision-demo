@@ -158,6 +158,11 @@ kokkos_ep_add_eft_test(dd_eft_test)
 # no LIBQUADMATH gate). Same contraction-OFF posture as dd_eft_test (Dekker
 # twoProduct is the contraction hazard). Contraction-ON reporter mirror is T2.5.
 kokkos_ep_add_eft_test(ff_eft_test)
+# T2.3 property/identity tests for FF: Group A bit-exact (no oracle), Group B/Test C
+# use the __float128 oracle (runtime-SKIPs without LIBQUADMATH). FF analogue of
+# dd_property_test. Plain helper — NOT an EFT test, so no contraction flags
+# (identities are FMA-contraction agnostic).
+kokkos_ep_add_test(ff_property_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)
