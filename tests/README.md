@@ -30,6 +30,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `hello_test`      | T0.1         | Harness plumbing on a trivial DD round-trip identity  |
 | `corpus_test`     | T0.2         | Corner-case corpus (`corpus.hpp`) scaffolding         |
 | `dd_eft_test`     | T1.1         | EFT bit-exactness: DD `twoSum` + Dekker `twoProduct`  |
+| `ff_eft_test`     | T2.1         | EFT bit-exactness: FF `twoSum` + Dekker `twoProduct` (splitter `8193.0f` = 2¹³+1); **FP64 oracle** — exact, no LIBQUADMATH needed, runs unconditionally |
 | `dd_invariant_test` | T1.2       | Non-overlap invariant `fl(hi+lo)==hi` for **every** DD op (unary/binary/ternary/two-output); oracle-independent (no `__float128`, runs without LIBQUADMATH) |
 | `dd_property_test` | T1.3        | Algebraic identities: **Group A** bit-exact (no oracle, e.g. `a·1==a`, `a-a==0`), **Group B** tolerance vs `__float128` (e.g. `sqrt(a)²≈a`, `sin²+cos²≈1`), **Test C** named-constant regressions (`sin(π)≈0`, …) |
 | `dd_accuracy_test` | T1.4        | Differential accuracy vs `__float128`: per-op digits of accuracy over 10⁶ random + corpus; **fail-gates on MEAN** ≥ −log10(N·u²) ≈ 25.91; PORT_NOTES §5 conditioning-limited ops report **EXPECTED-MIN-DROP** (gated on mean, not min); runtime-SKIPs without LIBQUADMATH |
@@ -215,6 +216,39 @@ demos and other test layers keep the project's normal flags. Reuse this helper f
 the future FF (T2.1) and QF (T3.1) EFT tests. (T1.5 later builds the full
 contraction on/off regression matrix; T1.1 only needs the posture in place so its
 own results are meaningful.)
+
+### FF EFT (Layer 1, Phase 2)
+
+`ff_eft_test.cpp` (T2.1) is the FF analogue of `dd_eft_test.cpp`. It tests the
+same two transforms at the raw-`float` level — the twoSum embedded in `FloatFloat`
+`add` (`ff_math.hpp:174-181`) and the Dekker twoProduct embedded in `multiply`
+(`ff_math.hpp:193-207`, ≡ `two_prod` `ff_math.hpp:266-274`), mirrored into the test
+file for RAW floats; `ff_math.hpp` is not modified. It reuses the same four corpora
+(broad random `[-1e30f,1e30f]`, narrow random `[-1,1]`, `|a|≫|b|` with `k∈[1,20]`,
+full `corpus::unary<float>()` cross-product), named hard cases, and device-parity
+pass.
+
+The one material difference from T1.1 is the **oracle**. For FF the ground truth is
+plain **FP64**, not `__float128`: the exact FP32 sum needs ≤25 bits and the exact
+FP32 product ≤48 bits, both of which fit in FP64's 53-bit mantissa, so widening the
+operands and summing/multiplying in `double` is **algebraically exact** — a
+*stronger* oracle than DD's quadmath (exact, not merely higher-precision), and one
+that needs no external library. So `ff_eft_test` carries **no `KOKKOS_EP_HAVE_QUADMATH`
+gate and no runtime SKIP-77** — it runs on every build.
+
+FP32-specific domain skips (out-of-domain, **not** failures): twoSum skips only
+non-finite pairs and sums that overflow FP32; Dekker twoProduct additionally skips
+subnormal operands, splitter-overflow magnitudes (`|x| ≥ FLT_MAX / (2¹³+1) ≈
+2^115`, derived from the `a * 8193.0f` split — this is PORT_NOTES §4a's `exp`
+splitter-overflow mechanism), and products that overflow or gradually underflow
+(error term `< 2⁻¹⁰²` would fall into FP32 subnormals). Registered with the same
+`kokkos_ep_add_eft_test(ff_eft_test)` (contraction OFF); the contraction-ON reporter
+mirror is T2.5.
+
+> **Splitter naming.** The shipped FF splitter is `8193.0f`, which is **2¹³ + 1**
+> (not 2¹² + 1 = 4097). The `ff_math.hpp:192` comment states this correctly; a stale
+> "2^12+1" typo in the `ff_math.hpp` license header and in the T2.1 task text is
+> noted but not fixed here (T2.1 does not modify `ff_math.hpp`).
 
 ## Non-overlap invariant (Layer 2)
 

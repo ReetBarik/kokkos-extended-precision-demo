@@ -149,6 +149,11 @@ kokkos_ep_add_test(dd_accuracy_test)
 # helper — NOT an EFT test, so no contraction flags (kernels are not EFT atoms).
 kokkos_ep_add_test(dd_e2e_test)
 kokkos_ep_add_eft_test(dd_eft_test)
+# T2.1 EFT unit tests for FF: twoSum + Dekker twoProduct, FP64 oracle (exact —
+# 25-bit sum / 48-bit product fit in FP64's 53-bit mantissa; runs unconditionally,
+# no LIBQUADMATH gate). Same contraction-OFF posture as dd_eft_test (Dekker
+# twoProduct is the contraction hazard). Contraction-ON reporter mirror is T2.5.
+kokkos_ep_add_eft_test(ff_eft_test)
 # T1.5 FMA-contraction guard: same source, two postures (see dd_fma_guard_test.cpp).
 kokkos_ep_add_eft_test(dd_fma_guard_test)              # -> dd_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_contract_on  (ON, reports)

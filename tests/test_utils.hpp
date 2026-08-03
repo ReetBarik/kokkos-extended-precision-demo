@@ -43,6 +43,7 @@
 #endif
 
 #include <dd_math.hpp>
+#include <ff_math.hpp>
 
 // Corner-case corpus (T0.2). Included at file scope (outside namespace
 // kokkos_ep) because corpus.hpp declares its own namespace kokkos_ep::corpus;
@@ -76,7 +77,7 @@ using float128 = __float128;
 namespace dd = Kokkos::Experimental;
 
 struct DD {};  // double-double (2 x FP64)
-// TODO(Phase 2): struct FF {};  // float-float (2 x FP32), backend on fffunKokkos
+struct FF {};  // float-float  (2 x FP32), backend merged onto main in T2.0
 // TODO(Phase 3): struct QF {};  // quad-float  (4 x FP32), backend on qffunKokkos
 
 template <typename Backend>
@@ -102,6 +103,44 @@ struct BackendTraits<DD> {
   // Widen a DD value to the oracle type. Bit-exact: hi + lo with no rounding
   // because |lo| <= 1/2 ulp(hi) and __float128 has far more mantissa. Mirrors
   // dd_to_q() in src/demo_real.cpp.
+  static float128 to_quad(type x) {
+    return (float128)x.hi + (float128)x.lo;
+  }
+#endif
+};
+
+// ---------------------------------------------------------------------------
+// FF (float-float, 2 x FP32). Merged onto main in T2.0. Mirrors the DD entry
+// above field-for-field so the T2.2/T2.3/T2.4/T2.6 tests can instantiate the
+// same runner/accuracy machinery against FF with zero source duplication.
+//
+// This entry is what T2.1 is required to add even though the T2.1 EFT test is
+// self-contained (it does NOT call the run_* runners or digits_of_accuracy —
+// its oracle is exact FP64, not the __float128 quadmath oracle these helpers
+// use). Provided here so the later FF layers are unblocked.
+// ---------------------------------------------------------------------------
+template <>
+struct BackendTraits<FF> {
+  using type = Kokkos::Experimental::FloatFloat;
+
+  // u = 2^-24 (FP32 unit roundoff). FF carries two FP32 limbs, so the relevant
+  // scale for double-word (float-float) error bounds is u^2 = 2^-48. (The DD
+  // analogue is u = 2^-53, u^2 = 2^-106.)
+  static constexpr double u          = 1.0 / 16777216.0;              // 2^-24
+  static constexpr double u_squared  = (1.0 / 16777216.0)            // 2^-24
+                                     * (1.0 / 16777216.0);           // * 2^-24 = 2^-48
+
+  // FP32 mantissa is 24 bits; two limbs give ~48 bits ~= -log10(2^-48) ~= 14.45
+  // decimal digits. Cap digit counts at 14 to avoid reporting oracle noise as
+  // accuracy. Matches kMaxDigits (14.0) in src/demo_ff_real.cpp.
+  static constexpr int max_digits = 14;
+
+  static const char* name() { return "FF"; }
+
+#ifdef KOKKOS_EP_HAVE_QUADMATH
+  // Widen an FF value to the oracle type. Bit-exact: hi + lo with no rounding
+  // because |lo| <= 1/2 ulp(hi) and __float128 has far more mantissa. Mirrors
+  // ff_to_q() in src/demo_ff_real.cpp.
   static float128 to_quad(type x) {
     return (float128)x.hi + (float128)x.lo;
   }
