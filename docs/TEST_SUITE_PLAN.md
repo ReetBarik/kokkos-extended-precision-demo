@@ -865,7 +865,7 @@ FF library is already implemented on `fffunKokkos`. Phase 2 = validate
 
 **T2.0: Merge FF backend into main behind Kokkos::Experimental namespace. (DONE)**
 
-- Executed 2026-08-02. Commit `dad92ef`.
+- Executed 2026-08-02. Commit `dad92ef` (task); DONE block + docs-pointer `7441670`.
 - Brought the mechanically-DD→FF-translated float-float library from
   `fffunKokkos` onto `main`, behind the same `Kokkos::Experimental` namespace
   and STL-style API the DD backend adopted in T0.4. Non-trivial because the FF
