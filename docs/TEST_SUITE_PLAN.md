@@ -1983,7 +1983,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Report failures with 4-component bit patterns.
 
 - Executed 2026-08-04. Task commit `4627336` on `qffunKokkos`; gate-flip commit
-  `353193d`; PORT_NOTES §16 commit `104027c`; DONE block + docs-pointer follow.
+  `353193d`; PORT_NOTES §16 commit `104027c`; DONE block + docs-pointer `9da35c2`.
   Branch tip advanced by exactly four commits vs T3.1 (task, gate-flip, §16,
   DONE-block; +docs-pointer). Second Phase-3 *validation* task — the T2.2
   analogue for the QF backend, running the length-4 non-overlap invariant *on*
