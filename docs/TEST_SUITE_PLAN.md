@@ -1612,6 +1612,57 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Deliverable: `qf_math.hpp` compiles, arithmetic ops work, minimal
   standalone smoke test (like `scripts/test_ffmul.cpp` but for QF).
 
+- Executed 2026-08-03. Branch `qffunKokkos` (forked from `main@b0d3cdf`);
+  task commit `d47947b`; DONE block + docs-pointer follow. First Phase-3
+  task; first from-scratch implementation in the project (all prior tasks
+  validated existing code).
+- **Branching decision.** Created from `main` (not `fffunKokkos` — the
+  plan-doc's original "from `fffunKokkos`" wording predated T2.0's merge of
+  FF onto `main` behind `Kokkos::Experimental`, so `main` already carries the
+  full FF infrastructure this branch inherits).
+- **What shipped (6 files, +1332).** `qf_math.hpp` (756),
+  `scripts/test_qfmul.cpp` (243), `docs/PORT_NOTES_QF.md` (186),
+  `scripts/gen_qf_constants.cpp` (84),
+  `LICENSES/LicenseRef-LBNL-BSD-License.txt` (61), `.gitignore` (+2).
+- **QD 2.3.24 source citations (every non-trivial routine cites its QD
+  location, in-header):** `renorm` / `renorm_4` (Priest/Alg-3,
+  `qd_inline.h:127-177`), `three_sum` / `two_sum` / `two_prod` (QD
+  by-reference EFTs, `qd/include/qd/inline.h`), `ieee_add`
+  (`qd_inline.h:286-336`), `sloppy_add` (the active default,
+  `qd_inline.h:338-405`), `multiply` = `sloppy_mul`
+  (`qd_inline.h:567-599`), `sqr` (`qd_inline.h:674-715`), `divide` =
+  `sloppy_div` / long division (`qd_real.cpp:693-712`), `accurate_div`
+  (`qd_real.cpp:714-736`), `sqrt` = Heron (`qd_real.cpp:738-785`), `nint`
+  (`inline.h:116-120`), `pow_int` (`qd_real.cpp:48-86`).
+- **Two source-fidelity deviations (both accepted, both cited; rule 6):**
+  - **`divide` = long division (not Newton) + `sqrt` = Heron (not Karp
+    reciprocal-Newton).** The prompt described the wrong algorithms; QD
+    2.3.24 actually uses classical long division for `divide` and Heron's
+    method for `sqrt`. Ported QD's real code per the QD-source-fidelity rule
+    (non-negotiable). Prompt drafting error corrected, documented in
+    PORT_NOTES §0a/§0b.
+  - **License = LBNL-BSD (not DHB).** The prompt said "copy ff's DHB
+    header"; the plan-doc's own lineage rule says QF (QD-derived) →
+    `LicenseRef-LBNL-BSD-License`. Cluster-Claude followed the plan-doc, not
+    the prompt — a DHB attribution on a QD derivative would misattribute
+    copyright.
+- **Smoke-test results (`scripts/test_qfmul.cpp` vs `__float128`).** 5 ops
+  PASS: add / subtract 29.00 / 29.00, multiply 29.00 / 28.42, divide 28.99
+  / 27.78, sqrt 29.00 / 28.18 — all above the 28-digit target.
+- **Newton/iteration-count justification.** `sqrt` Heron: 3 iterations
+  (24 → 48 → 96 bits, saturating at QF width). `divide` long division: 4
+  quotient digits (sloppy) / 5 (accurate), per-digit convergence
+  24 → 48 → 72 → 96. Algebra in PORT_NOTES §0c.
+- **PORT_NOTES_QF.md §1–§5 gotchas:** splitter reuse (§1),
+  splitter-overflow limit not ported (§2), `sloppy_add` safety at the
+  narrower FP32 exponent (§3), the FF `ffnint` bug does NOT recur at QF
+  (§4), constant generation precision (§5).
+- **Compile.** `qf_math.hpp` zero-warning under GCC 13.3.0 + Kokkos 5.1
+  (C++20, `-Wall -Wextra -Wpedantic`). `dd_math.hpp` / `ff_math.hpp` /
+  `ff_complex.hpp` untouched. CMake QF demo target deferred to T3.0b (a
+  39-op demo needs transcendentals; no demo source exists yet).
+- See `d47947b` for the code diff and this DONE block for the outcome.
+
 **T3.0b: QF library — transcendentals.**
 
 - Add to `qf_math.hpp`:
@@ -1640,6 +1691,110 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Deliverable: `qf_math.hpp` complete, `demo_qf_real.cpp` and
   `demo_qf_complex.cpp` (adapted from FF equivalents) run and produce
   ~28-29 digits accuracy against quadmath.
+
+- Executed 2026-08-03. Task commit `d50099b` on `qffunKokkos` (branch tip
+  advanced by exactly one commit vs T3.0a); DONE block + docs-pointer follow.
+- **What shipped (4 files, +1475 / −5).** `qf_math.hpp` (+511
+  transcendentals), `src/demo_qf_real.cpp` (new, 804),
+  `docs/PORT_NOTES_QF.md` (+156, §6–§11), `CMakeLists.txt` (+9, registers
+  `kokkos_ep_demo_qf` mirroring the FF demo target).
+- **QD 2.3.24 source citations per transcendental (60 citations grepped in
+  `qf_math.hpp`):** `exp` (`qd_real.cpp:925-983`), `log`
+  (`qd_real.cpp:986-1011`), `log10` (`qd_real.cpp:1025`), `sincos` /
+  `sin` / `cos` (`qd_real.cpp:2298-2360`), `tan` (`qd_real.cpp:2473`),
+  `atan2` / `angle` (`qd_real.cpp:2393-2460`), `atan` (`qd_real.cpp:2389`),
+  `asin` (`qd_real.cpp:2479`), `acos` (`qd_real.cpp:2494`), `sinh` / `cosh`
+  (`qd_real.cpp:2509-2547`), `tanh` (`qd_real.cpp`), `asinh`
+  (`qd_real.cpp:2576`), `acosh` (`qd_real.cpp:2580`), `atanh`
+  (`qd_real.cpp:2589`), `pow` (`qd_real.cpp:655`), `fmod`
+  (`qd_real.cpp:2598`), `remainder` = `drem` (`qd_real.cpp:2462`), `floor`
+  (`qd_real.cpp:136-157`), `ceil` (`qd_real.cpp:159-180`), `trunc`,
+  `round` (QD `nint`, `qd_real.cpp:96`, T3.0a).
+- **No-QD-analogue compositions honestly flagged.** `log2`, `log1p`,
+  `exp2`, `exp10`, `expm1`, `hypot`, `copysign`, `fmax` / `fmin` / `fdim` /
+  `fma` have no direct QD routine; each is composed from ported primitives
+  and noted as such in-header (not passed off as a faithful port).
+- **Demo results — 39/39 PASS on `demo_qf_real.cpp` vs `__float128`
+  oracle.** Per-op means: arithmetic / rounding / data ops 29.00; log-family
+  28.99; sin / cos 28.57, tan 28.89; asin 28.68 / acos 28.85 / atan 28.98;
+  sinh / cosh 28.2, tanh 28.87; asinh / acosh 28.95–28.98, atanh 28.72; pow
+  27.77; exp2 / exp10 26.79; exp 25.99 (min 10.5 — denormal tail at
+  a ≈ −80, PORT_NOTES §5 / §10). An independent 2000-sample host probe agrees
+  within 0.1 digit.
+- **`exp` term-count derivation.** `|r| ≤ (log2/2)/2^nq`; need
+  `|r|^N/N! < u = 2⁻⁹⁶`. With `nq=6` (`|r| ≤ 5.4e-3`), `N=11` terms. QD's
+  FP64 `exp` uses `nq=16` + a 15-entry `inv_fact` table capped at < 9 terms;
+  QF uses more Taylor terms but far fewer squarings (6 vs 16) and no
+  factorial table. Full derivation in PORT_NOTES §7.
+- **`sinh` / `cosh` threshold decision.** Kept at 0.5 (FF's), not shifted to
+  QD's 0.05. Cancellation loss ≈ `log₁₀(1/|a|)`: ~0.3 digits at 0.5 vs ~1.3
+  at 0.05. At QF's 29-digit budget the wider Taylor coverage is safer.
+  Derivation in PORT_NOTES §8.
+- **§4b remainder-sign observation.** No FP32 sign divergence observed at
+  QF. `remainder` scores mean 29.00 vs oracle (reuses QD `nint` =
+  `floor(d+0.5)`, which per T3.0a §4 avoids the FF `ffnint` bug; matches
+  `std::remainderf`). No fix introduced. Documented in PORT_NOTES §9.
+- **Source-fidelity deviation (accepted, called out prominently; rule 6):
+  table-free port of `sin` / `cos` / `exp`.** QD 2.3.24 uses lookup tables:
+  `inv_fact[15]` for `exp`, `sin_table[256]` / `cos_table[256]` for
+  `sin` / `cos` / `sincos`. QF is table-free — Taylor with divide-by-k
+  accumulating `1/k!` inline, joint `sincos` via doublings, no lookup. Three
+  reasons: (1) the T3.0b task + PORT_NOTES §3a explicitly directed joint
+  doublings + a "more terms than QD" Taylor; (2) 256-entry × 4-word FP32
+  tables (2048 constants) would be device-hostile on the GPU/accelerator
+  targets Kokkos serves; (3) QF's 4-word π makes mod-2π reduction accurate
+  enough that tables aren't needed — bonus: near-π `sin` / `cos` beats FF's
+  §5 conditioning ceiling.
+- **T3.6 archaeology reminder.** QF is now algorithmically different from QD
+  in its transcendental inner loops. When T3.6 validates QF against QD
+  reference results (or any other QF-vs-QD comparison), differences are
+  **expected and by design, not defects.** PORT_NOTES §6 documents the
+  divergence in full.
+- **`qf_complex.hpp` deferred to a new §T3.0c slot** (see below): the
+  plan-doc names `demo_qf_complex.cpp` in the T3.0b deliverable but not the
+  header, so the complex QF backend is carved out as its own task rather than
+  half-shipped here.
+- **PORT_NOTES_QF.md new sections:** §6 table-free divergence, §7 `exp`
+  term count + coarse-eps to avoid the FF `exp`-stall bug, §8 `sinh`
+  threshold, §9 remainder sign, §10 `exp` denormal tail / §4a scaling, §11
+  demo verdict + measured accuracy.
+- **Compile.** Zero-warning under GCC 13.3.0 + Kokkos 5.1 (C++20,
+  `-Wall -Wextra -Wpedantic`); the only notes are pre-existing `-Wpedantic`
+  Q-suffix notes from the Kokkos `__float128` oracle header (identical in the
+  FF demo).
+- **Acceptance-gate results.** Branch tip advanced by exactly one commit;
+  `qf_math.hpp` + demo compile clean; `demo_qf_real` compiles + runs RC 0,
+  mean ≥ 28 for well-conditioned ops; `main` ctest 14/16 green (400s Serial,
+  the 2 pre-existing REDs T1.4 / T2.4 unchanged); every non-trivial
+  transcendental cites its QD 2.3.24 location; FF PORT_NOTES §3a / §3b / §3c /
+  §4a applied proactively; §4b documented; `dd_math.hpp` / `ff_math.hpp` /
+  `ff_complex.hpp` untouched; `main` untouched (no QF files on `main`).
+- See `d50099b` for the code diff and this DONE block for the outcome.
+  `qf_complex.hpp` and `demo_qf_complex.cpp` deferred to new §T3.0c slot.
+
+**T3.0c: QF complex library.**
+
+- Port `third_party/include/ff_complex.hpp` mechanically to QF, mirroring the
+  DD→FF complex port done pre-T2.0 on `fffunKokkos`.
+- Create `third_party/include/qf_complex.hpp` under
+  `namespace Kokkos::Experimental` (STL-style API matching `ff_complex.hpp` /
+  `dd_complex.hpp`): `QuadFloatComplex` struct with two `QuadFloat`
+  components; all standard complex ops (add / subtract / multiply / divide /
+  negate / conjugate / abs / norm / arg); complex transcendentals (exp, log,
+  sin, cos, sinh, cosh, sqrt, pow, polar).
+- Preserve the table-free posture from T3.0b — no `sin_table` / `cos_table` /
+  `inv_fact` in the complex header either.
+- Apply FF PORT_NOTES §3–§5 lessons proactively (same as T3.0b): bare-scalar
+  promotions via literal-lift, `sqrt` internal ½ / 2 constants, ±1 via
+  literal, real→complex imaginary padding via `literal(0)`.
+- LBNL-BSD license header (same lineage rule as T3.0a).
+- **Preamble mandate:** read QD 2.3.24's `qd/src/qd_complex.cpp` (if present)
+  or `dd/src/dd_complex.cpp` cover-to-cover BEFORE porting. If QD lacks a
+  complex header entirely and only FF's `ff_complex.hpp` is the reference,
+  note that.
+- Deliverable: `qf_complex.hpp` complete, `src/demo_qf_complex.cpp` (adapted
+  from `demo_ff_complex.cpp`) runs and produces ~28–29 digits accuracy
+  against quadmath.
 
 **T3.1: EFT unit tests for QF.**
 
