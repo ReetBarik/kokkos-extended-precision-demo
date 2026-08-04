@@ -1796,6 +1796,91 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   from `demo_ff_complex.cpp`) runs and produces ~28–29 digits accuracy
   against quadmath.
 
+- Executed 2026-08-04. Task commit `74f28a2` on `qffunKokkos` (branch tip
+  advanced by exactly one commit vs T3.0b); DONE block + docs-pointer follow.
+  Completes Phase 3's build sub-phase (§T3.0a–c); T3.1 onward is validation.
+- **What shipped (4 files, +1236 / −5).** `third_party/include/qf_complex.hpp`
+  (new, 422): `Kokkos::Experimental::QuadFloatComplex` (two `QuadFloat`
+  components) + full complex math, composing on the T3.0a/T3.0b `qf_math.hpp`
+  real arithmetic and table-free transcendentals. `src/demo_qf_complex.cpp`
+  (new, 703, adapted from `demo_ff_complex.cpp` + the T3.0b `demo_qf_real.cpp`
+  verdict). `CMakeLists.txt` (+11 / −5, registers `kokkos_ep_demo_qf_complex`
+  mirroring the FF-complex target + install entry). `docs/PORT_NOTES_QF.md`
+  (+100, §12–§15 + the complex-layer license-lineage note).
+- **Op inventory (all `KOKKOS_INLINE_FUNCTION`).** Standard ops
+  (add / subtract / multiply / divide / negate / conjugate / abs / norm / arg)
+  + transcendentals (sqrt, exp, log, log10, sin, cos, tan, asin, acos, atan,
+  sinh, cosh, tanh, asinh, acosh, atanh, pow, polar) — the full
+  `ff_complex.hpp` inventory. Every non-trivial function cites its
+  `ff_complex.hpp` (and, where deeper, `dd_complex.hpp`) line range in-header.
+- **Table-free posture preserved (T3.0b lineage).** No `sin_table` /
+  `cos_table` / `inv_fact` in the complex header; every transcendental routes
+  through the table-free real `qf_math.hpp` primitives. FF PORT_NOTES §3–§5
+  lessons applied proactively (bare-scalar promotion via literal-lift, `sqrt`
+  internal ½ / 2 constants, ±1 via literal, real→complex imaginary padding via
+  `literal(0)`).
+- **QD 2.3.24 source finding (preamble mandate).** The tarball ships **NO**
+  `qd/src/qd_complex.cpp` or `dd/src/dd_complex.cpp` — a `grep -ril complex`
+  over the whole 2.3.24 tree matches only NEWS / README / TODO / Fortran
+  files; `qd/include/qd/` + `qd/src/` carry the `qd_real` / `dd_real` real
+  types and the `c_dd` / `c_qd` C-linkage wrappers of the real types only. QD
+  leaves quad-double complex for users to layer on. So `ff_complex.hpp` +
+  `dd_complex.hpp` are the **sole** algorithm references (no QD complex routine
+  exists to cite); PORT_NOTES §13.
+- **Deviation 1 — `sincos` / `sinhcosh` OUTPUT-ARGUMENT ORDER swap (silent-
+  wrong-answer trap; PORT_NOTES §12).** `ff_math.hpp` writes `sincos(a, x, y)`
+  as `x = cos, y = sin` (and `sinhcosh` as `x = cosh, y = sinh`); `qf_math.hpp`
+  names them **sin-first** (`sincos(a, sin_a, cos_a)`) / **sinh-first**. Porting
+  `ff_complex.hpp`'s `sincos(z.im, c, s)` verbatim would bind `c` to sin and
+  `s` to cos — every complex exp/sin/cos/sinh/cosh/tanh/polar would silently
+  swap its components. Fixed by passing the local variables in **swapped
+  positional order** at every call site (`sincos(z.im, s, c)`,
+  `sinhcosh(…, sb, cb)`, …) so the local names stay identical to
+  `ff_complex.hpp` (`c` = cos, `s` = sin, `cb` = cosh, `sb` = sinh) and the
+  downstream algebra is byte-for-byte the same. Documented in the header
+  preamble and inline at each call site; no numeric deviation once applied.
+- **Deviation 2 — license lineage LBNL-BSD, not DHB (PORT_NOTES "License
+  lineage (complex layer — T3.0c)").** Two precedents weighed: **(a)** follow
+  scalar dispatch (LBNL-BSD, as T3.0a chose for `qf_math.hpp`) vs **(b)** follow
+  the structural template (DHB, as `ff_complex.hpp` inherits from
+  `dd_complex.hpp`'s DDFUN heritage). **Chose (a) LBNL-BSD.** The header
+  contains no DDFUN/DHB-original arithmetic — the complex composition formulas
+  are textbook identities and every non-trivial numeric step is a QD-derived
+  QuadFloat op; a DHB header would misattribute copyright to Bailey personally
+  for a file whose substance is the LBNL institutional QD package. Keeps the
+  whole QF backend (`qf_math.hpp` + `qf_complex.hpp`) under one consistent
+  license. Flagged in PORT_NOTES for review; Reet confirmed. (`NOTICE.md` gains
+  a `qf_complex.hpp` LBNL-BSD row at the T3.x QF→`main` merge, out of scope.)
+- **`norm` / `arg` are additions, not ports (PORT_NOTES §14).** `ff_complex` /
+  `dd_complex` ship only `abs` + `conj` as standalone basic ops and expose the
+  angle solely inside `log()`; `qf_complex.hpp` adds `norm(z) = re²+im²` (the
+  *squared* magnitude — C++ `std::norm`, no sqrt) and `arg(z) = atan2(im, re)`
+  per `std::complex` conventions, flagged in-header as inventory additions with
+  no upstream line to cite.
+- **Acceptance-gate results.** `src/demo_qf_complex.cpp` exercises all 24
+  complex ops vs the `__complex128` oracle and returns RC 0 iff every op meets
+  a mean ≥ 24.0-digit gate in BOTH real and imag components (conditioning-
+  limited ops exempt — the complex list of PORT_NOTES §15: sub, div, tan,
+  asin / acos / atan / atanh, log / log10, pow). Run `--batch 5000 --repeats 2`
+  (Serial/host): **24 pass / 0 fail / 0 conditioning-exempt, RC 0** — every op
+  cleared the gate on its own, so none needed the exemption. Well-conditioned
+  means sit at the 28.12–29.00-digit QF ceiling; the lowest means (atan-imag
+  26.81, tanh-imag 27.70, pow 27.8) are the branch-cut / compounded-conditioning
+  cases, all still above the 24-digit gate. Full per-op real/imag table in
+  PORT_NOTES §15.
+- **Rule 4 respected.** `dd_math.hpp` / `dd_complex.hpp` / `ff_math.hpp` /
+  `ff_complex.hpp` / `qf_math.hpp` all untouched (no needed helper surfaced);
+  `main` untouched (no QF files on `main`). `main` ctest 14/16 green (the 2
+  pre-existing REDs T1.4 `dd_accuracy` + T2.4 `ff_accuracy` unchanged).
+- **Compile.** `qf_complex.hpp` zero-warning under GCC 13.3.0 + Kokkos 5.1
+  (C++20, `-Wall -Wextra -Wpedantic`); the only notes are the 2 pre-existing
+  `-Wpedantic` Q-suffix notes from the Kokkos `__complex128` oracle header,
+  identical in count to `demo_ff_complex.cpp`.
+- **Next task: T3.1 (EFT unit tests for QF)** — the first Phase-3 *validation*
+  task, and the first test that *runs on* the QF backend rather than authoring
+  it (`twoSum` / Dekker `twoProd` / `renorm_4` at primitive level).
+- See `74f28a2` for the code diff and this DONE block for the outcome.
+
 **T3.1: EFT unit tests for QF.**
 
 - Test `twoSum`, Dekker `twoProd` at primitive level (same as FF —
