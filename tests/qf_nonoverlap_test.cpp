@@ -51,12 +51,16 @@
 //   NOVL_FAIL — some word > ulp(f_i), OR a packing break (nonzero after a zero),
 //               OR NaN/inf in a checkable slot  (genuine corruption — always fatal)
 // NOVL_FAIL fails under EITHER gate.  Whether NOVL_WEAK fails is controlled by the
-// single flag kStrictPriestGate (see its definition below): true (default) =
-// strict Priest, WEAK counts as failure (the faithful reading of the T3.2 spec,
-// so the test ships RED on the weak-normalizing ops until Reet rules on posture);
-// false = Shewchuk, WEAK tolerated.  To CHANGE the posture, flip that one flag —
-// do NOT loosen the check itself.  Every WEAK deviation is counted and its worst
-// overlap ratio (1.0 = exactly 1/2 ulp, 2.0 = exactly ulp) is reported per-op.
+// single flag kStrictPriestGate (see its definition below): false (default) =
+// Shewchuk-weak, WEAK tolerated (the posture adopted after Reet's review — QD's
+// renorm is a quick_two_sum cascade and provably delivers only the weak bound, so
+// testing for strict Priest would demand a stronger library than qf_math.hpp, a
+// faithful QD port, claims to be; see PORT_NOTES_QF §16); true = strict Priest,
+// WEAK counts as failure (the literal reading of the original T3.2 spec, kept as a
+// diagnostic switch).  To CHANGE the posture, flip that one flag — do NOT loosen
+// the check itself.  Every WEAK deviation is counted and its worst overlap ratio
+// (1.0 = exactly 1/2 ulp, 2.0 = exactly ulp) is reported per-op regardless of the
+// gate, so any drift into the (1/2 ulp, ulp] band stays visible in the log.
 //
 // WHY INPUTS ARE BUILT BY ORDERED FP32 DECOMPOSITION (T3.1's construction)
 // -----------------------------------------------------------------------
@@ -193,18 +197,22 @@ inline bool pair_checkable(float hi) {
 // ulp]. All such deviations stay within ulp (ratio < 2.0); NONE exceed it and NONE
 // break packing. This is inherent to QD's fast renormalization, not a per-op bug,
 // and cannot be tightened without replacing the renorm (a library change barred by
-// Rule 4). It is therefore a §5-conditioning candidate, reported for Reet's call.
+// Rule 4). See PORT_NOTES_QF §16 for the algorithmic proof and the posture ruling.
 //
 // kStrictPriestGate selects which invariant is FATAL:
-//   true  (default, faithful to the plan): strict Priest -- a (1/2 ulp, ulp] word
-//         is a failure. ctest is RED on the QD weak-normalization ops above.
-//   false (Reet may flip after review): QD weak -- only >ulp overlaps / packing
-//         breaks / NaN·inf leaks are fatal. Strict deviations are still counted and
-//         reported, just non-fatal. ctest is GREEN.
+//   false (default, per Reet's review -- PORT_NOTES_QF §16): QD weak-normalization
+//         is the correct posture. renorm is a quick_two_sum cascade that cannot
+//         beat |f_{i+1}| <= ulp(f_i), so a (1/2 ulp, ulp] word is expected, not a
+//         defect; only >ulp overlaps / packing breaks / NaN·inf leaks are fatal.
+//         Strict deviations are still counted and reported, just non-fatal. ctest
+//         is GREEN.
+//   true  (diagnostic switch, literal reading of the original T3.2 spec): strict
+//         Priest -- a (1/2 ulp, ulp] word is a failure. ctest is RED on the QD
+//         weak-normalization ops above (kept for regression diagnostics only).
 // Either way the strict 1/2-ulp check runs on every output and every deviation is
 // tallied with its overlap ratio -- nothing is hidden. Do NOT silently loosen: to
 // change the gate, flip this one flag (a visible, reviewed decision), not the check.
-static constexpr bool kStrictPriestGate = true;
+static constexpr bool kStrictPriestGate = false;
 
 // Three-level non-overlap classification on (b0,b1,b2,b3):
 //   NOVL_OK    every checkable pair satisfies strict Priest |f_{i+1}| <= 1/2 ulp(f_i)
