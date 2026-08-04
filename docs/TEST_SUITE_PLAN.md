@@ -1892,6 +1892,90 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   invariant `|f_{i+1}| ≤ ½ ulp(f_i)` AND equals input as real number
   (within QF truncation threshold).
 
+- Executed 2026-08-04. Task commit `3c40cf7` on `qffunKokkos` (branch tip
+  advanced by exactly one commit vs T3.0c); DONE block + docs-pointer follow.
+  First Phase-3 *validation* task — opens the T3.1–T3.6 validation sequence
+  that runs *on* the QF backend rather than authoring it (T3.0a–c built it).
+- **What shipped (3 files, +918 LOC).** `tests/qf_eft_test.cpp` (new, 861):
+  Layer-1 EFT unit test calling the SHIPPED `qf_math.hpp` primitives directly.
+  `tests/CMakeLists.txt` (+10, adds `kokkos_ep_add_eft_test(qf_eft_test)` — the
+  contraction-OFF helper, same as `ff_eft_test` / `dd_eft_test`).
+  `tests/README.md` (+47, registry row + a "QF EFT" section documenting the two
+  structural deviations from T2.1).
+- **EFT inventory covered (all shipped free functions in
+  `Kokkos::Experimental`).** `qf_two_sum`, `qf_quick_two_sum`, Dekker
+  `qf_two_prod`, `qf_two_sqr` (`qf_math.hpp:118-158`); `renorm` (length-4 →
+  length-4) and `renorm_4` (length-5 → length-4) (`qf_math.hpp:182-257`). QD
+  2.3.24 lineage: `qd/include/qd/inline.h` (twoSum / twoProd / two_sqr),
+  `qd/include/qd/qd_inline.h` (renorm 4-word / 5-word).
+- **Oracle strategy per EFT.** FP32 primitives use **plain FP64, provable-
+  exact** (not merely higher-precision): the exact FP32 sum needs ≤25 bits and
+  the exact FP32 product ≤48 bits, both inside FP64's 53-bit mantissa, so
+  `(double)s+(double)e == (double)a+(double)b` (and the product form) is a
+  *bit-equality* — no quadmath, runs unconditionally, same posture as T2.1.
+  renorm/renorm_4 value-preservation uses a **two-tier** oracle: exact FP64 for
+  53-bit-source inputs (renorm drops nothing → bit-exact `sum(b_i)==x`), plus a
+  wide-spread `__float128` check (input = ordered decomposition of a ~113-bit
+  value where renorm genuinely truncates the tail) verifying relative agreement
+  within the QF truncation threshold (rel ≤ 2⁻⁸⁸; observed max ~1.6e-30 ≈ 2⁻⁹⁹).
+- **Acceptance-gate verdict.** `ctest -R qf_eft` → **100% passed, 0 failed,
+  11.5 s**. Zero-warning under GCC 13.3.0 + Kokkos 5.1 (C++20,
+  `-Wall -Wextra -Wpedantic`). Per-EFT counts (tested / skipped / failed):
+  `qf_two_sum` 2,113,526 / 335 / 0; `qf_quick_two_sum` 2,113,526 / 335 / 0;
+  `qf_two_prod` 2,110,205 / 3,656 / 0; `qf_two_sqr` 2,111,573 / 2,288 / 0;
+  `renorm_4` bounded 1,000,000 / 0 / 0; `renorm` bounded 1,000,000 / 0 / 0;
+  `renorm_4` wide-spread 1,000,000 / 540 pair-skips / 0; named-case corner
+  tests 21 / 1 skip / 0; device parity 600,000 / 0 / 0. Skips are out-of-domain
+  (splitter overflow, subnormal operands, underflow tail), not failures.
+- **Contraction-OFF posture confirmed** via the `kokkos_ep_add_eft_test` helper
+  (same as `ff_eft_test` / `dd_eft_test`): Dekker `twoProduct` needs `a1*b1 - p`
+  to be TWO distinct rounded ops, so `-ffp-contract=off` (host) / `--fmad=false`
+  (CUDA) is mandatory or the error term collapses to zero. T3.5 later builds the
+  contraction-ON reporter mirror; T3.1 needs only the OFF posture.
+- **Corner-case coverage.** Zero, ±ulp, near-cancellation, subnormals, ±inf,
+  and NaN-propagation-without-crash, as named hard cases. The device-parity
+  block re-runs ordered-input EFTs through `Kokkos::parallel_for` (Serial
+  backend here) against an exact-double per-element oracle → host/device bit-
+  parity.
+- **Deviation 1 — no mirror-and-comment.** T2.1 had to *duplicate* FF's twoSum /
+  Dekker twoProduct into the test file because `ff_math.hpp` embeds them inside
+  the longer `add()`/`multiply()` sequences (no standalone primitive to call).
+  `qf_math.hpp` instead EXPOSES the shipped primitives as free functions in
+  `Kokkos::Experimental`, so T3.1 calls the ACTUAL shipped code — strictly
+  stronger than a mirror (which can drift from the header). Rule 4 trivially
+  respected (only `#include`, never edit). Documented at
+  `qf_eft_test.cpp:29-56`.
+- **Deviation 2 — renorm inputs must be magnitude-ordered (T3.1-original
+  methodology).** No FF analogue exists for `renorm_4`. renorm/renorm_4 are QD's
+  renormalization step; their `quick_two_sum` cascade (`qf_quick_two_sum`
+  requires |a| ≥ |b|) ASSUMES a magnitude-ordered "sloppy" expansion — exactly
+  what `add`/`multiply`/`divide`/`QuadFloat(double)` produce. So the test
+  generates every renorm input by successive FP32 decomposition of a wider
+  scalar (FP64 for the exact oracle, `__float128` for the wide-spread oracle),
+  yielding the ordered magnitude-decreasing shape callers feed. Documented at
+  `qf_eft_test.cpp:69-95`.
+- **Test-bug caught during development — NOT a library defect, no B-task.** The
+  first-draft renorm generator fed ARBITRARY UNORDERED words, violating the
+  `quick_two_sum` precondition, and produced spurious value/overlap failures.
+  Fixed in the test (ordered decomposition, above). Three `__float128`-oracle
+  probes confirmed `renorm`/`renorm_4` are CORRECT on properly-ordered input
+  (max rel 1.6e-30 < u = 2⁻⁹⁶). Called out explicitly to distinguish a test-
+  authoring lesson from a real `qf_math.hpp` defect — this is the former, so no
+  follow-up B-task is warranted.
+- **Cross-reference to T2.1 in-source** (`qf_eft_test.cpp:23-56`): the FF-EFT
+  test (commit `4e025b0`) covers FP32 twoSum / Dekker twoProduct against
+  bit-identical mirrors; T3.1 re-exercises the same primitives against the
+  separately-compiled QF-side symbols (guards against a QF copy drifting from
+  FF's) and ADDS `qf_two_sqr` + the renorm family.
+- **Rule 4 respected.** No touch to `dd_math.hpp` / `dd_complex.hpp` /
+  `ff_math.hpp` / `ff_complex.hpp` / `qf_math.hpp` / `qf_complex.hpp` /
+  `PORT_NOTES_QF.md` — only test-side files changed (T3.1 is a test, not a
+  port). `main` untouched; `qffunKokkos` not merged.
+- **Next task: T3.2 (non-overlap invariant checks for QF)** — the T2.2 analogue
+  for the QF backend; second Phase-3 validation task (Priest length-4 invariant
+  across every QF op, 10⁶ inputs + corpus).
+- See `3c40cf7` for the code diff and this DONE block for the outcome.
+
 **T3.2: Non-overlap invariant checks for QF.**
 
 - Priest length-4 invariant: `|f_{i+1}| ≤ ½ ulp(f_i)` for i = 0,1,2.
