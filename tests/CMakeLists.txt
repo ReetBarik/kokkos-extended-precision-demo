@@ -217,3 +217,17 @@ kokkos_ep_add_eft_test(qf_eft_test)
 # nothing to contract, so no -ffp-contract=off posture is required. QF analogue of
 # ff_invariant_test (T2.2); shares half_ulp / nonoverlap_holds with qf_eft_test.
 kokkos_ep_add_test(qf_nonoverlap_test)
+
+# T3.3 property/identity tests for QF: Group A bit-exact identities (additive
+# inverse/zero, multiply by 0/+-1, negation, abs sign branches, add commutativity
+# — bit-exact even on WIDE operands, a QF strengthening over FF/DD — and the
+# mul_pwr2 power-of-2 round-trip) + Group B tolerance identities (demoted mul
+# commutativity, sqrt/square, exp/log round-trips, Pythagorean, addition formulas,
+# hyperbolic, inverse pairs, pow/hypot, and the small-arg exp(a+eps) sensitivity —
+# the T2.3 B4 pattern, which does NOT recur in QF). __float128-ordered corpus;
+# QF quad-word tolerance = ulp of U=2^-96 (10 ulp = 27.90 digits default; 30 ulp
+# for exp-denormal-tail-limited round-trips per PORT_NOTES_QF §10). Group A runs
+# unconditionally; Group B / Test C are quadmath-gated (SKIP 77 otherwise). Plain
+# helper (NOT the EFT helper): algebraic identities are FMA-contraction agnostic.
+# QF analogue of ff_property_test (T2.3).
+kokkos_ep_add_test(qf_property_test)

@@ -45,6 +45,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `ff_fma_guard_test_contract_on` | T2.5 | FF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `ff_fma_guard_baseline.txt` |
 | `qf_eft_test`     | T3.1         | EFT bit-exactness for QF: `qf_two_sum` / `qf_quick_two_sum` / `qf_two_prod` / `qf_two_sqr` (splitter `8193.0f` = 2¹³+1; **FP64 oracle**, exact, no LIBQUADMATH) **plus** the QF-unique `renorm_4` (len 5→4) and `renorm` (len 4→4): Priest non-overlap invariant + **exact FP64 value-preservation** on bounded-spread inputs, and a wide-spread `__float128` truncation check (rel ≤ 2⁻⁸⁸) behind the quadmath guard. Calls the **shipped** `qf_math.hpp` free functions directly (no mirror-and-comment). Contraction OFF |
 | `qf_nonoverlap_test` | T3.2      | Priest **length-4** non-overlap invariant `\|f_{i+1}\| ≤ ½ ulp(f_i)` (i=0,1,2, mathematical ½-ulp form via `frexp`) on the **output** of every QF op returning a `QuadFloat` (arithmetic incl. `ieee_add`/`sloppy_add`/`divide_accurate`, `sqr`/`sqrt`, all transcendentals, joint `sincos`/`sinhcosh` components, `angle`, `multiply_scalar`, `mul_pwr2` **(±2ᵏ only)**, `fma`, `pow_int`, round family, utilities); oracle-independent (runs without LIBQUADMATH), `__float128` only **enriches inputs** to ~96-bit ordered width behind the quadmath gate. QF analogue of `ff_invariant_test`; trig domain has **no tiny-arg lower bound** (QF `sincos` has no FFCSSNR stall). Two-tier classifier (`NOVL_OK`/`NOVL_WEAK`/`NOVL_FAIL`); **ships RED under the default strict Priest gate** because QD `renorm` gives only Shewchuk-weak `≤ ulp` non-overlap — flip `kStrictPriestGate` for the weak gate (see §QF non-overlap). Plain helper (no contraction posture) |
+| `qf_property_test` | T3.3         | QF analogue of `ff_property_test`: **Group A** 12 bit-exact identities (no oracle — additive inverse/zero, `a·0`/`a·1`/`a·(-1)`, double negation, `abs` sign branches/`abs(-a)`, **add commutativity bit-exact on WIDE 4-word operands** — a QF strengthening over FF/DD's single-word restriction — and the `mul_pwr2` ±2ᵏ round-trip), **Group B** 15 tolerance identities vs `__float128` (**mean-gated** at an absolute **ulp of U=2⁻⁹⁶** floor — 10 ulp = 27.90 digits default, 30 ulp = 27.42 for the exp-denormal-tail-limited `exp(log)`/`pow(x,2)` per PORT_NOTES_QF §10 — **NOT** the DD/FF `−log10(N·u²)` statistical floor, since QF is a quad-word whose resolution IS U), **Test C** named-constant regressions (target ≥27 of QF's 29 digits). Includes the T2.3 **B4 exp-eps** pattern (`exp(a+eps)≈exp(a)(1+eps)`) — which does **NOT** recur in QF (`qf_math.hpp` exp uses `eps=1e-28f` coarser than U). Group A unconditional; Group B / Test C runtime-SKIP without LIBQUADMATH. Plain helper (no contraction posture) |
 
 ## How to run
 
@@ -587,6 +588,69 @@ inputs, with `View<float*>` limb transfer. Registered with the plain
 `kokkos_ep_add_test` helper (no contraction flags — identities are
 FMA-contraction agnostic). `ff_math.hpp`/`ff_complex.hpp` are **not** modified by
 this layer.
+
+### QF property/identity (Layer 3, Phase 3)
+
+`qf_property_test.cpp` (**T3.3**) is the QF (QuadFloat, 4×FP32) analogue of
+`ff_property_test.cpp`, mirroring its Group A / Group B / Test C taxonomy verbatim.
+There is **one deliberate structural divergence — the tolerance model** — plus one
+QF **strengthening**.
+
+**Tolerance model (the divergence).** DD/FF are *double-word* formats: their nominal
+precision is `u²` (`2⁻¹⁰⁶` / `2⁻⁴⁸`), and T1.3/T2.3 gate Group B on the statistical
+floor `−log10(N·u²)`. QF is a *quad-word* — its resolution **is** `U = 2⁻⁹⁶` itself
+(four FP32 limbs ≈ 96 bits), not some `u⁴`. Re-using `−log10(N·U)` would give a
+*looser* ~23.6 floor, so T3.3 instead follows the **plan's stated policy** ("1–10 ulp
+at QF's ~2⁻⁹⁶ resolution") with an **absolute ulp floor**, still gating on the mean:
+`digits(k ulp) = 96·log10(2) − log10(k)`, i.e. **10 ulp → 27.90** (default),
+**30 ulp → 27.42** (for the two exp-tail-limited round-trips). Per-identity ulp
+bounds are cited in-source (plan rule 5).
+
+**Group A (12 bit-exact, no oracle, raw 4-word `==`).** `a+(-a)==0`, `a-a==0`,
+`a+0==a`, `a-0==a`, `a·1==a`, `a·0==0`, `a·(-1)==negate(a)`, `-(-a)==a`, `abs` sign
+branches, `abs(-a)==abs(a)`, add commutativity, and the `mul_pwr2` power-of-2
+round-trip `mul_pwr2(mul_pwr2(a,2ᵏ),2⁻ᵏ)==a`. **Strengthening vs FF/DD:** add
+commutativity is bit-exact on **full-width Route-A (double) operands** here — QF's
+`sloppy_add` is a symmetric componentwise twoSum cascade whose `renorm` collapses the
+accumulator identically regardless of operand order (verified bit-exact over 3×10⁶
+4-word operands), so it does **not** need the single-word restriction FF/DD imposed.
+Multiply-based identities are Dekker-domain-gated (`split_safe_max()=FLT_MAX/8193`);
+the `mul_pwr2` round-trip additionally skips inputs whose ×2ᵏ intermediate overflows
+FP32 (`|x|≈FLT_MAX`) — a range limit, not a defect. All 12 pass with **0 failures**.
+
+**Group B (15 tolerance).** `B0` demoted multiply commutativity (Dekker cross-term
+reorders under swap — same demotion as DD/FF), `B1` `sqrt(a)²≈a`, `B2` `exp(log a)≈a`,
+`B3` `log(exp a)≈a`, `B4` `sin²+cos²≈1`, `B5` `cosh²−sinh²≈1` (`|a|<5`: at large `|a|`
+both terms are ~`e²ᵃ/4` and their difference is catastrophic cancellation, an FP
+property), `B6`/`B7` `sin/cos(a+b)` addition formulas (`|a|,|b|<3`, reduction clean),
+`B8` `tanh≈sinh/cosh`, `B9`/`B10` inverse pairs `asin(sin)`/`atan(tan)` (`|a|<1.4`),
+`B11` `pow(a,2)≈a·a`, `B12` `sqrt(a²)≈|a|`, `B13` `hypot²≈a²+b²`, and `B14` the
+small-argument sensitivity `exp(a+eps)≈exp(a)·(1+eps)`. `B2` (`[1e-13,1e13]`) and
+`B11` (`[1e-3,1e3]`) are gated at **30 ulp** with a **PORT_NOTES_QF §10** citation —
+their internal `exp` maps arguments whose low QF words fall into the FP32 denormal
+tail, a documented conditioning limit (marked EXEMPT, not loosened). All 15 clear
+their gates; means 27.79–29.00.
+
+**B14 = the T2.3 B4 pattern — and it does NOT recur in QF.** T2.3 surfaced a real
+`ff_math.hpp` bug (B4): exp's convergence `eps=1e-15f` is *finer* than FF's ~3.55e-15
+resolution, so small-arg exp stalled and returned 0. `qf_math.hpp` exp uses
+`eps=1e-28f`, deliberately *coarser* than `U=2⁻⁹⁶` (PORT_NOTES_QF §7/§10 — the QF port
+fixed exactly this class of bug at authoring time). B14 draws `|eps|≤1e-15` (so the
+identity's own dropped `O(eps²)` term stays below `U`) and holds to **mean 28.06, min
+26.40 with no stall**. B14 is GREEN; **no QF B-task is filed**. It stays in the suite
+as a durable regression guard and for T2.3 parity.
+
+**Test C.** Target ≥27 of QF's 29 digits: `C1 |sin(π)|≈0` (softened to a
+conditioning-aware floor, arg reduction near π), `C2 log(e)≈1`, `C3 exp(log2)≈2`,
+`C4 √2·√2≈2`, `C5 log(10)≈log10` constant — **5/5 pass**. `C6` euler_gamma/digamma is
+skipped (no digamma op in `qf_math.hpp`).
+
+**Device pass.** 3 Group A (`A1`, `A5`, `A9`) + 2 Group B (`B1`, `B4`) rerun on
+device (10⁵ inputs, `View<float*>` 4-limb transfer) — all pass. `kRandomN = 2×10⁵`,
+tuned down from the plan's 10⁶ for the same wall-time reason as `qf_nonoverlap_test`
+(the absolute ulp floor is N-independent, so the reduction does not shift the gate).
+Registered with the plain `kokkos_ep_add_test` helper. `qf_math.hpp` is **not**
+modified (rule 4).
 
 ## Differential accuracy (Layer 4)
 
