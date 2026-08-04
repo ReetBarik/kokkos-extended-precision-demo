@@ -206,3 +206,14 @@ kokkos_ep_add_eft_test_contract_on(ff_fma_guard_test)  # -> ff_fma_guard_test_co
 # contraction-OFF posture as ff_eft_test (Dekker twoProduct is the contraction
 # hazard). Contraction-ON reporter mirror is T3.5.
 kokkos_ep_add_eft_test(qf_eft_test)
+
+# T3.2 non-overlap invariant checks for QF: the Priest length-4 invariant
+# |f_{i+1}| <= 1/2 ulp(f_i) (i=0,1,2) on the OUTPUT of every QF op that returns a
+# QuadFloat (arithmetic, sqrt, transcendentals, joint sincos/sinhcosh, scalar
+# multiply_scalar/mul_pwr2, fma, pow_int, round family, utilities). Oracle-
+# independent (mathematical 1/2-ulp form via frexp — no reference value), so it
+# runs unconditionally; __float128 only enriches inputs to ~96-bit width behind
+# the quadmath gate. Plain helper (NOT the EFT helper): a per-word add/compare has
+# nothing to contract, so no -ffp-contract=off posture is required. QF analogue of
+# ff_invariant_test (T2.2); shares half_ulp / nonoverlap_holds with qf_eft_test.
+kokkos_ep_add_test(qf_nonoverlap_test)

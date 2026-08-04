@@ -44,6 +44,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `ff_fma_guard_test` | T2.5 | FF analogue of `dd_fma_guard_test`, **contraction OFF** — same Dekker `twoProduct` (splitter `8193.0f` = 2¹³+1) built `-ffp-contract=off`; **fail-gates** on any mismatch. **FP64 oracle** (exact — 48-bit product fits FP64's 53-bit mantissa), so runs **unconditionally** (no LIBQUADMATH gate, no SKIP-77) |
 | `ff_fma_guard_test_contract_on` | T2.5 | FF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `ff_fma_guard_baseline.txt` |
 | `qf_eft_test`     | T3.1         | EFT bit-exactness for QF: `qf_two_sum` / `qf_quick_two_sum` / `qf_two_prod` / `qf_two_sqr` (splitter `8193.0f` = 2¹³+1; **FP64 oracle**, exact, no LIBQUADMATH) **plus** the QF-unique `renorm_4` (len 5→4) and `renorm` (len 4→4): Priest non-overlap invariant + **exact FP64 value-preservation** on bounded-spread inputs, and a wide-spread `__float128` truncation check (rel ≤ 2⁻⁸⁸) behind the quadmath guard. Calls the **shipped** `qf_math.hpp` free functions directly (no mirror-and-comment). Contraction OFF |
+| `qf_nonoverlap_test` | T3.2      | Priest **length-4** non-overlap invariant `\|f_{i+1}\| ≤ ½ ulp(f_i)` (i=0,1,2, mathematical ½-ulp form via `frexp`) on the **output** of every QF op returning a `QuadFloat` (arithmetic incl. `ieee_add`/`sloppy_add`/`divide_accurate`, `sqr`/`sqrt`, all transcendentals, joint `sincos`/`sinhcosh` components, `angle`, `multiply_scalar`, `mul_pwr2` **(±2ᵏ only)**, `fma`, `pow_int`, round family, utilities); oracle-independent (runs without LIBQUADMATH), `__float128` only **enriches inputs** to ~96-bit ordered width behind the quadmath gate. QF analogue of `ff_invariant_test`; trig domain has **no tiny-arg lower bound** (QF `sincos` has no FFCSSNR stall). Two-tier classifier (`NOVL_OK`/`NOVL_WEAK`/`NOVL_FAIL`); **ships RED under the default strict Priest gate** because QD `renorm` gives only Shewchuk-weak `≤ ulp` non-overlap — flip `kStrictPriestGate` for the weak gate (see §QF non-overlap). Plain helper (no contraction posture) |
 
 ## How to run
 
@@ -431,6 +432,66 @@ distinct roles** (kept explicit in the test output so readers don't conflate the
 > is not surprised by the same hole if the DD op inventory grows or a future random
 > seed lands in the tail. Flagged as a cross-cutting known-lurking issue in the T2.2
 > DONE block.
+
+### QF non-overlap invariant (Layer 2, Phase 3)
+
+`qf_nonoverlap_test.cpp` (**T3.2**) is the QF (QuadFloat, 4×FP32) analogue of
+`ff_invariant_test`/`dd_invariant_test`, extended from the length-2 pair to the
+**length-4** Priest non-overlap chain `|f_{i+1}| ≤ ½ ulp(f_i)` for `i = 0, 1, 2`.
+Two structural changes vs T2.2:
+
+1. **Mathematical ½-ulp form via `frexp`, not the pair bit-form `fl(hi+lo)==hi`.**
+   The bit-form (a) only speaks about a single pair — QuadFloat is length-4, so the
+   per-word chain is needed — and (b) has round-to-even **false positives** at exact
+   ties. `classify_nonoverlap` evaluates `half_ulp(f_i) = 2^(e−25)` (from `frexp`)
+   directly on each of the three adjacent word pairs. Same `half_ulp`/`pair_checkable`
+   machinery T3.1 proved on the renorm atoms, now applied to **every** op's output.
+2. **Inputs enriched to ~96-bit ordered width via `__float128`.** `make_wide_input`
+   promotes each nominal `double`, adds sub-leading-ulp tail terms (~2⁻²⁸/2⁻⁵⁶/2⁻⁸⁴
+   relative), then decomposes into four ordered FP32 words by successive
+   round-to-nearest (T3.1's construction), so the non-renorming passthrough ops
+   (`negate`/`abs`/`mul_pwr2`/`copysign`/`fmax`/`fmin`) are exercised on genuinely
+   length-4 inputs. Enrichment is `KOKKOS_EP_HAVE_QUADMATH`-gated; the invariant check
+   is **not** (runs without LIBQUADMATH).
+
+**Op inventory: 54 host ops** (29 unary + 4 joint `sincos`/`sinhcosh` components +
+17 binary + 4 special-form `multiply_scalar`/`mul_pwr2`/`fma`/`pow_int`) plus a
+5-op device tripwire (`add`/`multiply`/`sqrt`/`exp`/`sin`) — vs T2.2's 50 FF ops
+(the +4 are QF's `ieee_add`/`sloppy_add`/`divide_accurate` arithmetic variants).
+Registered with the plain `kokkos_ep_add_test` helper (no contraction flags).
+`kRandomN = 2×10⁵`, tuned down from the plan's 10⁶ (~5.5 min vs ~13.5 min); the
+higher-rate ops still surface deterministically under the fixed per-op seeds. The QF
+trig family carries **no tiny-argument lower bound** (unlike T2.2's `|x| ≥ 1e-25`
+floor): QF `sincos` has no `FFCSSNR`-style iteration stall.
+
+> **Finding (QD weak-normalization → strict Priest gate ships RED).** qf_math's
+> `renorm`/`renorm_4` (the QD 2.3.24 Hida-Li-Bailey normalization) is a
+> `quick_two_sum` **cascade**, which provably delivers only the weaker **Shewchuk**
+> non-overlap `|f_{i+1}| ≤ ulp(f_i)`, *not* strict Priest `≤ ½ ulp` (Joldes/Muller/
+> Popescu, "Tight & rigorous error bounds for … double-word arithmetic"). So a
+> handful of renorming ops legitimately land a word in the half-open band
+> `(½ ulp, ulp]` — strictly Priest-violating but **not** corruption. The test
+> classifies each result three ways — `NOVL_OK` (strict), `NOVL_WEAK` (QD band),
+> `NOVL_FAIL` (>ulp, packing break, or NaN/inf — always fatal) — and gates on the
+> single flag `kStrictPriestGate`. At `kRandomN=2×10⁵`: **zero `NOVL_FAIL` across all
+> ~11.2M checked results** (no genuine corruption), **19 weak deviations across 9
+> ops** (`log`, `cos`, `sincos.cos`, `subtract`, `fmod`, `remainder`, `fdim`,
+> `multiply_scalar`, `pow_int`; worst ratio **1.375** = `fmod`, all `< 2.0` = all
+> inside the ulp band, robustly driven by `fmod`/`remainder`). Under the **default
+> strict** gate (`kStrictPriestGate=true`, the faithful reading of the T3.2 spec)
+> these 9 ops count as failures → the test **ships RED** (RC=1). This is *systemic*
+> (shared renorm path), not per-op bugs, and unfixable without replacing the library's
+> normalization — **Rule 4 forbids** patching `qf_math.hpp`. It is the **"unclear"
+> branch** of the acceptance-gate decision tree: a conditioning/algorithmic limit, but
+> no `PORT_NOTES_QF.md §5` exists to house it and T3.2 may not create one. So it is
+> **reported and deferred to Reet** — flip `kStrictPriestGate → false` for the
+> Shewchuk gate (GREEN) if that posture is adopted. **Not silently loosened.** The
+> device tripwire (5 ops) and all 13 Test-C corner cases pass.
+
+> **Expected internal diagnostic.** `angle`/`atan2` each emit 9 `QFCSSNR: argument
+> too large` prints (18 total) — QF `sincos`'s internal large-argument guard firing
+> on an intermediate value; the results stay checkable and pass. Benign guard output
+> (analogous to T2.2's `FFEXP` prints), not a failure.
 
 ## Property/identity tests (Layer 3)
 
