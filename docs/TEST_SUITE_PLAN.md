@@ -1613,7 +1613,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   standalone smoke test (like `scripts/test_ffmul.cpp` but for QF).
 
 - Executed 2026-08-03. Branch `qffunKokkos` (forked from `main@b0d3cdf`);
-  task commit `d47947b`; DONE block + docs-pointer follow. First Phase-3
+  task commit `d47947b`; DONE block + docs-pointer `974744e`. First Phase-3
   task; first from-scratch implementation in the project (all prior tasks
   validated existing code).
 - **Branching decision.** Created from `main` (not `fffunKokkos` — the
@@ -1693,7 +1693,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   ~28-29 digits accuracy against quadmath.
 
 - Executed 2026-08-03. Task commit `d50099b` on `qffunKokkos` (branch tip
-  advanced by exactly one commit vs T3.0a); DONE block + docs-pointer follow.
+  advanced by exactly one commit vs T3.0a); DONE block + docs-pointer `974744e`.
 - **What shipped (4 files, +1475 / −5).** `qf_math.hpp` (+511
   transcendentals), `src/demo_qf_real.cpp` (new, 804),
   `docs/PORT_NOTES_QF.md` (+156, §6–§11), `CMakeLists.txt` (+9, registers
