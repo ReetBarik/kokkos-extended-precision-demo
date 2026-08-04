@@ -2065,6 +2065,94 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 
 - Same identities as T1.3/T2.3, adjusted for QF's ~29 digit precision.
 
+- Executed 2026-08-04. Task commit `2c25370` on `qffunKokkos`; DONE block +
+  docs-pointer follow. Branch tip advanced by exactly three commits vs T3.2
+  (task, DONE block, docs-pointer — no gate-flip, no PORT_NOTES entry: nothing
+  algorithmic surfaced). Third Phase-3 *validation* task — the T1.3/T2.3 analogue
+  for the QF backend (**3/6 Phase-3 validation tasks done**: T3.1 EFT, T3.2
+  non-overlap, T3.3 property).
+- **What shipped (3 files, +1026 LOC).** `tests/qf_property_test.cpp` (new, 948):
+  the algebraic-identity test — Group A carries NO oracle (a broken identity is
+  self-evident in the 4-word `==`), Group B scores against `__float128`
+  (`KOKKOS_EP_HAVE_QUADMATH`-gated, runtime-SKIP otherwise). `tests/CMakeLists.txt`
+  (+14, adds `kokkos_ep_add_test(qf_property_test)` — the PLAIN helper,
+  contraction posture irrelevant: identities are FMA-contraction agnostic).
+  `tests/README.md` (+64, registry row + a "QF property/identity (Layer 3,
+  Phase 3)" section).
+- **Group A inventory — bit-exact, no oracle (~200 K random per identity + full
+  finite corpus, raw 4-word `==`). 12 identities, 0 failures.** A1
+  `add(a,negate(a))==0`; A2 `a-a==0`; A3 `a+0==a`; A4 `a-0==a`; A5 `a·1==a`
+  (dom_dekker); A6 `a·0==0` → +0 (dom_dekker); A7 `a·(-1)==negate(a)` (dom_dekker);
+  A8 `negate(negate(a))==a`; A9 `abs` sign branches; A10 `abs(-a)==abs(a)`; A11
+  **add commutativity on WIDE 4-word operands** (a QF strengthening — see below);
+  A12 `mul_pwr2(mul_pwr2(a,2ᵏ),2⁻ᵏ)==a` ±2ᵏ round-trip. Skips are the corpus's
+  FLT_MAX / splitter-overflow (`|x|≥FLT_MAX/8193≈4.15e34`) / denormal-tail
+  (`|f0|<2⁻¹⁰⁰`) entries — range limits, not defects (SKIP-not-fail).
+- **Group B inventory — tolerance vs `__float128`, MEAN-gated. 15 identities, all
+  clear their gates.** (tol ulp / min-digits / mean-digits): B0 mul commutativity
+  demoted (10 / 28.30 / 29.00); B1 `sqrt(a)²≈a` (10 / 14.34 / 28.03); B2
+  `exp(log a)≈a` (**30 §10** / 26.48 / 27.94); B3 `log(exp a)≈a` (10 / 26.35 /
+  28.77); B4 `sin²+cos²≈1` (10 / 26.89 / 28.39); B5 `cosh²−sinh²≈1` (10 / 24.59 /
+  28.20); B6 `sin(a+b)` formula (10 / 23.59 / 28.28); B7 `cos(a+b)` formula (10 /
+  23.77 / 28.29); B8 `tanh≈sinh/cosh` (10 / 0.00 / 28.86); B9 `asin(sin a)≈a` (10 /
+  26.80 / 28.68); B10 `atan(tan a)≈a` (10 / 27.22 / 28.69); B11 `pow(a,2)≈a·a`
+  (**30 §10** / 26.19 / 27.79); B12 `sqrt(a²)≈|a|` (10 / 28.24 / 29.00); B13
+  `hypot²≈a²+b²` (10 / 27.82 / 28.98); B14 `exp(a+eps)≈exp(a)(1+eps)` (10 / 26.40 /
+  28.06). **Mean-gated posture:** the low mins on B1/B8 are conditioning-driven
+  (division near 0, sqrt at the denormal edge), while the means stay high — the
+  gate is on the mean by design.
+- **Tolerance model (deviation from T2.3).** QF uses an **absolute ulp-of-U =
+  2⁻⁹⁶ floor** — `digits(k ulp) = 96·log10(2) − log10(k)`, so **10 ulp = 27.90
+  digits, 30 ulp = 27.42** — NOT the DD/FF `−log10(N·u²)` *statistical* floor. QF
+  is a quad-word whose resolution IS U, so the statistical formula (which assumes
+  a double-word `u²` error model) would hand back a much looser ~23.6 floor that
+  would hide real drift. The absolute floor is also N-independent, so the
+  wall-time-driven `kRandomN` reduction does not move the gate. A genuine
+  methodological improvement over T2.3, documented in-source.
+- **The two 30-ulp gates cite PORT_NOTES_QF §10** (exp output-denormal tail): B2
+  `exp(log·)` and B11 `pow(x,2)` — the latter compounds `exp(y·log·)` conditioning
+  on top of the same tail. Marked EXEMPT via the in-source
+  `lookup_expected_min_drop("exp")` annotation. No new PORT_NOTES entry invented,
+  no tolerance silently loosened; the §10 tail is a pre-existing, already-documented
+  characterization.
+- **B14 = the T2.3 B4 regression guard — does NOT recur in QF.** FF's B4 was a
+  real `ff_math.hpp` bug (exp Taylor convergence `eps=1e-15f` finer than FF's
+  ~3.55e-15 resolution → iteration-cap stall / wrong-0 return). `qf_math.hpp`
+  exp uses `eps=1e-28f`, deliberately coarser than QF's U=2⁻⁹⁶ (an authoring-time
+  fix per PORT_NOTES_QF §7/§10). B14 holds to mean 28.06 with **no stall** and
+  **zero** diagnostic prints. **No QF B-task filed** — B14 stays as a durable
+  regression guard against the defect ever re-porting.
+- **A11 = a QF strengthening over FF/DD.** Add commutativity is bit-exact on
+  FULL-WIDTH 4-word operands (verified 0/3×10⁶ mismatches), where FF/DD could only
+  claim it for single-word operands (their `+a.lo+b.lo` tail reorders under swap).
+  A real QF property upgrade promoted into Group A, not a spec bug. Only `a·b==b·a`
+  still reorders (Dekker cross-term) → demoted to Group B (B0), exactly as in T1.3/
+  T2.3.
+- **Test C corner cases: 5/5 pass** (target ≥27 of 29 digits; C6 euler_gamma/
+  digamma SKIPPED — no QF digamma op / no independent oracle). **Device pass: 3
+  Group A + 2 Group B, all PASS** (Serial; `parallel_for` + `KOKKOS_LAMBDA` ships
+  4 float words back). **0 diagnostic prints** in the whole run.
+- **Deviations from T2.3 (all justified, all in-source).** (1) Tolerance model =
+  absolute ulp-of-U floor, not the `−log10(N·u²)` statistical floor. (2) A11 add
+  commutativity promoted into Group A on wide operands. (3) `kRandomN = 2×10⁵`
+  (same wall-time reduction as T3.2; the absolute ulp floor is N-independent so
+  the gate is unaffected). (4) Real QF ops only — `qf_complex` out of scope,
+  matching T2.3's real-only posture.
+- **Acceptance-gate verdict.** `ctest qf_property_test` → **PASS, 190.84 s**
+  (~3m11s). Zero-warning under GCC 13.3.0 + Kokkos 5.1 (`-Wall -Wextra
+  -Wpedantic`).
+- **RED cases / B-tasks: none.** No library defects surfaced. No new §16-style
+  algorithmic characterizations. No tolerance-setting judgment calls needed
+  beyond the documented model.
+- **Rule 4 respected.** No touch to any `*_math.hpp` / `*_complex.hpp` /
+  `PORT_NOTES_QF.md` — only test-side files changed. `main` untouched;
+  `qffunKokkos` not merged.
+- **Next task: T3.4 (differential accuracy for QF vs quadmath)** — the T2.4
+  analogue, the heavy Phase-3 task where real precision defects are expected to
+  surface (T2.4 shipped RED with B5/B6/B7 for FF erf/erfc/tgamma). Ready to draft
+  when Reet asks.
+- See `2c25370` for the code diff and this DONE block for the outcome.
+
 **T3.4: Differential accuracy for QF vs quadmath (with MPFR fallback).**
 
 - Per-op `max(rel_err / u⁴)` where `u = 2⁻²⁴`.
