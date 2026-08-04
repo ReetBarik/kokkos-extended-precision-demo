@@ -316,6 +316,106 @@ RC 0**. Per-op mean digits: arithmetic/rounding/data ops 29.00; log-family
 
 ---
 
+# Porting notes: QF complex layer (T3.0c — qf_complex.hpp)
+
+`third_party/include/qf_complex.hpp` is a scalar-swap port of
+`ff_complex.hpp` (FloatFloat → QuadFloat), which is itself a DD→FF translation
+of `dd_complex.hpp`. Most of it is mechanical — the complex composition formulas
+((ac−bd)+(ad+bc)i product, Kahan complex sqrt, Euler exp, polar log) are textbook
+identities dispatching to `qf_math.hpp`'s LBNL-BSD QuadFloat routines. Four
+complex-specific findings are recorded below (rule 6 / rule 8).
+
+## 12. `sincos` / `sinhcosh` OUTPUT-ARGUMENT ORDER differs between ff_math and qf_math
+
+The single biggest porting hazard in T3.0c — a silent-wrong-answer trap if copied
+verbatim. The two real backends name their joint-output params in **opposite
+order**:
+
+- `ff_math.hpp`: `sincos(a, x, y)` writes `x = cos(a)`, `y = sin(a)`;
+  `sinhcosh(a, x, y)` writes `x = cosh(a)`, `y = sinh(a)`
+  (see the trailing `x = cos_r; y = sin_r;` at the end of each ff routine).
+- `qf_math.hpp`: `sincos(a, sin_a, cos_a)` — **sin first**;
+  `sinhcosh(a, sinh_a, cosh_a)` — **sinh first** (the T3.0b out-param names).
+
+`ff_complex.hpp` calls e.g. `sincos(z.im, c, s)` relying on the FF (cos, sin)
+order. Porting that call verbatim to QF would bind `c` to `sin` and `s` to `cos`
+— every complex exp/sin/cos/sinh/cosh/tanh/polar would silently swap its
+sin/cos components. `qf_complex.hpp` therefore passes the local (cos, sin) /
+(cosh, sinh) variables in **swapped positional order** at every call site
+(`sincos(z.im, s, c)`, `sinhcosh(z.im, sb, cb)`, …), so the local variable
+*meanings* (`c` = cos, `s` = sin, `cb` = cosh, `sb` = sinh, …) stay identical to
+`ff_complex.hpp` and the downstream algebra is byte-for-byte the same. This is
+called out in the `qf_complex.hpp` header preamble and inline at each call. There
+is no numeric deviation once the swap is applied — measured sin/cos/sinh/cosh
+means are 28.1–28.3 digits, consistent with the real T3.0b transcendentals.
+
+## 13. QD 2.3.24 ships NO complex header — ff_complex/dd_complex are the sole refs
+
+The T3.0c preamble mandate is to read `qd/src/qd_complex.cpp` (or
+`dd/src/dd_complex.cpp`) before porting. **Neither exists in QD 2.3.24.** A
+`grep -ril complex` over the whole 2.3.24 tree matches only NEWS / README / TODO
+/ Fortran files; `qd/include/qd/` and `qd/src/` carry `qd_real.{h,cpp}`,
+`dd_real.{h,cpp}`, and the `c_dd`/`c_qd` C-linkage wrappers of the **real** types
+only. QD's quad-double complex is left for users to layer on. Consequently
+`ff_complex.hpp` + `dd_complex.hpp` are the **sole** algorithm references for
+`qf_complex.hpp`; there is no QD complex routine to cite, and each function
+therefore cites the `ff_complex.hpp` (and, as the deeper DDFUN-derived reference,
+`dd_complex.hpp`) line range it mirrors, not a QD location.
+
+## 14. `norm` / `arg` are additions, not ports (no ff/dd analogue)
+
+The T3.0c op inventory asks for `abs / norm / arg` among the "standard complex
+ops". `ff_complex.hpp` / `dd_complex.hpp` ship only `abs` and `conj` as standalone
+basic ops; they expose the polar angle solely *inside* `log()` (via `atan2`) and
+never define `norm`. So `qf_complex.hpp` adds two functions with **no upstream
+line to cite**, using the `std::complex` conventions:
+`norm(z) = re²+im²` (the *squared* magnitude, no sqrt — the C++ standard's
+`std::norm`, not the "vector norm" = `abs`) and `arg(z) = atan2(im, re)`. Both are
+flagged in-header as inventory additions rather than ports. Measured `abs` mean
+29.0, and `norm`/`arg` reuse the same `multiply`/`add`/`atan2` primitives.
+
+## 15. Complex-op conditioning list + demo verdict (T3.0c deliverable)
+
+`src/demo_qf_complex.cpp` (adapted from `demo_ff_complex.cpp` + the T3.0b
+`demo_qf_real.cpp` verdict) exercises all 24 complex ops against the
+`__complex128` oracle and returns **RC 0 iff every op meets a mean ≥ 24.0-digit
+gate in BOTH the real and imag components**, with conditioning-limited ops exempt.
+The complex conditioning list (extends PORT_NOTES §5 to the complex layer):
+`sub` (near-cancellation), `div` (small-|denominator| amplification), `tan`
+(cos z → 0), `asin`/`acos`/`atan`/`atanh` (branch-point derivative blow-up),
+`log`/`log10` (|z| → 1 ⇒ real part → 0), `pow` (`exp(w·log z)` compounds log's
+conditioning). Run `--batch 5000 --repeats 2` (Serial/host backend): **24 pass,
+0 conditioning-exempt, 0 fail, RC 0** — every op cleared the gate on its own, so
+none needed the exemption. Per-op mean digits (real / imag): add/sub 29.00/29.00;
+mul 28.95/29.00; div 28.99/28.94; abs 29.00; conj 29.00; sqrt 28.99/28.99; exp
+28.12/28.12; log 28.45/28.70; log10 28.45/28.70; sin 28.28/28.17; cos 28.28/28.17;
+tan 28.08/28.70; asin 28.64/27.82; acos 28.88/27.82; atan 28.92/26.81;
+sinh 28.15/28.19; cosh 28.19/28.14; tanh 28.37/27.70; asinh 28.36/28.40;
+acosh 28.51/28.68; atanh 27.93/28.78; pow 27.78/27.81; polar 28.56/28.57. All
+well-conditioned ops sit at the ~28–29-digit QF ceiling; the lowest means
+(atan-imag 26.81, tanh-imag 27.70, pow 27.8) are the branch-cut / compounded
+cases flagged above, still above the 24-digit gate.
+
+## License lineage (complex layer — T3.0c)
+
+`qf_complex.hpp` carries `LicenseRef-LBNL-BSD-License` — the **same** license as
+`qf_math.hpp`, **not** the `LicenseRef-DHB-License` that governs its structural
+template `ff_complex.hpp` / `dd_complex.hpp`. Two precedents were weighed:
+**(a)** follow scalar dispatch (LBNL-BSD, as T3.0a chose for `qf_math.hpp`) —
+every arithmetic call inside the header dispatches to LBNL-BSD QuadFloat routines;
+**(b)** follow the structural template (DHB, as `ff_complex.hpp` inherits from
+`dd_complex.hpp`'s DDFUN heritage). **Decision: (a) LBNL-BSD.** Rationale: the
+file contains no DDFUN/DHB-original arithmetic — the complex composition formulas
+are textbook identities, not DDFUN inventions, and every non-trivial numeric step
+is a QD-derived QuadFloat op. A DHB header would attribute copyright to Bailey
+personally and cite the wrong commercial contact for a file whose substance is the
+LBNL institutional QD package; it also keeps the whole QF backend
+(`qf_math.hpp` + `qf_complex.hpp`) under one consistent license. Reet to confirm
+in review. `NOTICE.md` should gain a `qf_complex.hpp` row (LBNL-BSD) when QF
+merges to `main` (a T3.x merge task, out of T3.0c scope).
+
+---
+
 ## License lineage (T3.0a kickoff action item, TEST_SUITE_PLAN §"Phase 2/3
 open question")
 

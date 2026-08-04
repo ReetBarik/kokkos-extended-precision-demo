@@ -95,17 +95,23 @@ add_executable(kokkos_ep_demo_ff_complex src/demo_ff_complex.cpp)
 target_include_directories(kokkos_ep_demo_ff_complex PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(kokkos_ep_demo_ff_complex PRIVATE Kokkos::kokkos)
 
-# ---- QF (quad-float, 4xFP32) demo (T3.0b) -----------------------------------
-# Real transcendentals exercised against the __float128 oracle (same plumbing as
-# the DD/FF real demos). Only the real demo is built: qf_complex.hpp does not
-# exist yet (complex QF deferred past T3.0b), so there is no demo_qf_complex.cpp.
+# ---- QF (quad-float, 4xFP32) demos (T3.0b real, T3.0c complex) ---------------
+# Real transcendentals exercised against the __float128 oracle (T3.0b) and
+# complex ops against the __complex128 oracle (T3.0c), same plumbing as the
+# DD/FF demos. kokkos_ep_demo_qf_complex additionally needs the local
+# impl/Kokkos_ComplexQuadPrecisionMath.hpp wrapper (T0.3, probed above), exactly
+# as kokkos_ep_demo_ff_complex does.
 add_executable(kokkos_ep_demo_qf src/demo_qf_real.cpp)
 target_include_directories(kokkos_ep_demo_qf PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(kokkos_ep_demo_qf PRIVATE Kokkos::kokkos)
 
+add_executable(kokkos_ep_demo_qf_complex src/demo_qf_complex.cpp)
+target_include_directories(kokkos_ep_demo_qf_complex PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ep_demo_qf_complex PRIVATE Kokkos::kokkos)
+
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex
                 kokkos_ep_demo_ff kokkos_ep_demo_ff_complex
-                kokkos_ep_demo_qf
+                kokkos_ep_demo_qf kokkos_ep_demo_qf_complex
         RUNTIME DESTINATION bin)
 
 # ---- Tests (T0.1: backend-parameterized harness) ----------------------------
