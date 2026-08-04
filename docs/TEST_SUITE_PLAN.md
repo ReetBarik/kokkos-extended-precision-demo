@@ -1893,7 +1893,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   (within QF truncation threshold).
 
 - Executed 2026-08-04. Task commit `3c40cf7` on `qffunKokkos` (branch tip
-  advanced by exactly one commit vs T3.0c); DONE block + docs-pointer follow.
+  advanced by exactly one commit vs T3.0c); DONE block + docs-pointer `15518e5`.
   First Phase-3 *validation* task — opens the T3.1–T3.6 validation sequence
   that runs *on* the QF backend rather than authoring it (T3.0a–c built it).
 - **What shipped (3 files, +918 LOC).** `tests/qf_eft_test.cpp` (new, 861):
