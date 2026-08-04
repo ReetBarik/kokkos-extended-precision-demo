@@ -1797,7 +1797,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   against quadmath.
 
 - Executed 2026-08-04. Task commit `74f28a2` on `qffunKokkos` (branch tip
-  advanced by exactly one commit vs T3.0b); DONE block + docs-pointer follow.
+  advanced by exactly one commit vs T3.0b); DONE block + docs-pointer `01bdde9`.
   Completes Phase 3's build sub-phase (§T3.0a–c); T3.1 onward is validation.
 - **What shipped (4 files, +1236 / −5).** `third_party/include/qf_complex.hpp`
   (new, 422): `Kokkos::Experimental::QuadFloatComplex` (two `QuadFloat`
