@@ -1982,6 +1982,85 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Every QF op, 10⁶ inputs + corpus.
 - Report failures with 4-component bit patterns.
 
+- Executed 2026-08-04. Task commit `4627336` on `qffunKokkos`; gate-flip commit
+  `353193d`; PORT_NOTES §16 commit `104027c`; DONE block + docs-pointer follow.
+  Branch tip advanced by exactly four commits vs T3.1 (task, gate-flip, §16,
+  DONE-block; +docs-pointer). Second Phase-3 *validation* task — the T2.2
+  analogue for the QF backend, running the length-4 non-overlap invariant *on*
+  the shipped `qf_math.hpp`/`qf_complex.hpp`.
+- **What shipped (3 files, +1093 LOC).** `tests/qf_nonoverlap_test.cpp` (new,
+  1021): the invariant test — carries NO oracle (a normalization defect is
+  self-evident in the output words), runs unconditionally even on a
+  quadmath-less Kokkos; `__float128` is used ONLY to enrich inputs to full
+  ~96-bit width (KOKKOS_EP_HAVE_QUADMATH-gated). `tests/CMakeLists.txt` (+11,
+  adds `kokkos_ep_add_test(qf_nonoverlap_test)` — the PLAIN helper, contraction
+  posture irrelevant here). `tests/README.md` (+61, registry row + a "QF
+  non-overlap" section).
+- **Op inventory (54 host ops + 5 device tripwire).** vs T2.2's 50 FF host ops,
+  **+4** = `ieee_add` / `sloppy_add` / `divide_accurate` (the QD-specific
+  add/div variants qf_math exposes that FF does not) — the fourth delta is the
+  `sqr` split from `multiply`. Breakdown: 29 unary + 4 joint-component
+  (sincos.sin/.cos, sinhcosh.sinh/.cosh) + 17 binary + 4 special-form + 5 device
+  tripwire (add/multiply/sqrt/exp/sin re-run through `Kokkos::parallel_for`,
+  Serial backend).
+- **Invariant form (deviation 1 vs T2.2).** T2.2 (FF) checks a length-2 invariant
+  in **bit form**; T3.2 checks the mathematical ½-ulp form via `frexp` on the
+  length-4 chain (`half_ulp = 2^(e-25)` for FP32) at i = 0,1,2. The
+  mathematical-vs-bit form is the deliberate deviation for the longer expansion.
+- **Two-tier classifier.** `classify_nonoverlap()` returns NOVL_OK
+  (`|f_{i+1}| ≤ ½ ulp`), NOVL_WEAK (`½ ulp < · ≤ ulp`, the QD weak-normalization
+  band), NOVL_FAIL (`> ulp`, packing break — nonzero word after a zero — or
+  NaN/inf leak in a checkable slot). NOVL_FAIL is **always fatal**. Whether
+  NOVL_WEAK is fatal is the single flag `kStrictPriestGate`, **default `false`
+  (Shewchuk-weak) per PORT_NOTES §16** after Reet's review; `true` (strict
+  Priest) is retained as a diagnostic switch. WEAK deviations are counted per-op
+  with worst-ratio reported under **either** gate — nothing is hidden.
+- **Acceptance-gate verdict (AFTER the §16 flip).** `ctest -R qf_nonoverlap` →
+  **100% passed, 0 failed, 320.11 s** (~5m21s). Zero-warning under GCC 13.3.0 +
+  Kokkos 5.1 (`-Wall -Wextra -Wpedantic`). *Historical strict-Priest counts*
+  (`kStrictPriestGate = true`, same corpus, retained for the record): the test
+  shipped deterministically RED — **19 WEAK / 0 FAIL** across 11,234,222 checked,
+  worst ratio **1.375×** (fmod); those WEAK results are QD's baseline
+  normalization form, not regressions (see PORT_NOTES §16).
+- **Per-op counts (post-flip GREEN run).** 11,234,222 checked / 72,362 skipped /
+  **0 NOVL_FAIL** / 19 WEAK (worst 1.3750). Device tripwire 500,000 checked
+  (5 ops × 10⁵, exp skips its out-of-range tail), 0 FAIL. Corner cases 13/13
+  (zero / ±ulp / subnormal / ±inf / NaN — the non-checkable ones pass as
+  `inv=ok`). Skips are SKIP-not-fail: f0 NaN/±inf, f0 subnormal, underflow tail
+  (`|f0| < 2⁻¹⁰⁰`), or out-of-math-domain input (log ≤ 0, asin |x|>1, …).
+- **Corpus + input construction (deviations 2–3).** `kRandomN = 2×10⁵` per op
+  **+ full corner corpus** (deviation 3 — reduced from the plan's 10⁶ to keep
+  ctest at ~5m21s vs an extrapolated ~13.5 min; still 11.2M total checks). The
+  random pass builds each input with `make_wide_input()` (reused from T3.1: a
+  ~96-bit `__float128` → 4 magnitude-ordered FP32 words, leading word
+  `f0 == (float)x` so domain predicates written against nominal `x` stay valid);
+  the corpus pass uses the `QuadFloat(double)` constructor (deviation 2 — ordered
+  inputs are mandatory because renorm's `quick_two_sum` cascade assumes
+  `|a| ≥ |b|`; feeding unordered words would test renorm, T3.1's job, and raise
+  spurious failures on correct passthrough ops).
+- **Contraction-OFF NOT required.** Unlike T3.1/T3.5, this test uses the plain
+  `kokkos_ep_add_test` helper, not `_add_eft_test`: the invariant reads only the
+  *output* words' overlap structure, which does not depend on whether an internal
+  Dekker product contracted — so the FMA posture is irrelevant here.
+- **Benign diagnostics.** `angle` / `atan2` emit 18 benign `QFCSSNR: argument too
+  large` guard prints on far-out-of-range corpus inputs (the QF analogue of FF's
+  FFEXP guard) — informational, not failures. No tiny-argument trig lower bound
+  is imposed (the invariant is well-posed down to the underflow tail).
+- **Root-cause classification — WEAK is QD baseline, not a regression, not a
+  B-task.** The 19 WEAK deviations are systemic (shared `renorm`/`renorm_4` path,
+  a `quick_two_sum` cascade), match the published Shewchuk-weak bound, and are
+  unfixable without replacing QD's normalization — barred by Rule 4. Filed as a
+  **normalization-form clarification (PORT_NOTES §16)**, deliberately distinct
+  from the §5 accuracy/conditioning registry; real precision loss is assessed in
+  T3.4, not by this invariant.
+- **Rule 4 respected.** No touch to any `*_math.hpp` / `*_complex.hpp` in any of
+  the four commits (gate-flip is test-only; §16 + DONE block + docs-pointer are
+  docs-only). `main` untouched; `qffunKokkos` not merged.
+- **Next task: T3.3 (property/identity tests for QF)** — the T1.3/T2.3 analogue,
+  adjusted for QF's ~29-digit precision; third Phase-3 validation task.
+- See `4627336` (test), `353193d` (gate flip), `104027c` (§16) for the code/doc
+  diffs and this DONE block for the outcome.
+
 **T3.3: Property/identity tests for QF.**
 
 - Same identities as T1.3/T2.3, adjusted for QF's ~29 digit precision.
