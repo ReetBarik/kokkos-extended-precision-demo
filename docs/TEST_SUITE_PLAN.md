@@ -2066,7 +2066,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Same identities as T1.3/T2.3, adjusted for QF's ~29 digit precision.
 
 - Executed 2026-08-04. Task commit `2c25370` on `qffunKokkos`; DONE block +
-  docs-pointer follow. Branch tip advanced by exactly three commits vs T3.2
+  docs-pointer `d867ab3`. Branch tip advanced by exactly three commits vs T3.2
   (task, DONE block, docs-pointer — no gate-flip, no PORT_NOTES entry: nothing
   algorithmic surfaced). Third Phase-3 *validation* task — the T1.3/T2.3 analogue
   for the QF backend (**3/6 Phase-3 validation tasks done**: T3.1 EFT, T3.2
