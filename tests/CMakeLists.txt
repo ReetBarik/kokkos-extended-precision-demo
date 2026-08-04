@@ -196,3 +196,13 @@ kokkos_ep_add_eft_test_contract_on(dd_fma_guard_test)  # -> dd_fma_guard_test_co
 # both variants run unconditionally (no quadmath gate / SKIP-77).
 kokkos_ep_add_eft_test(ff_fma_guard_test)              # -> ff_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(ff_fma_guard_test)  # -> ff_fma_guard_test_contract_on  (ON, reports)
+# T3.1 EFT unit tests for QF: qf_two_sum / qf_quick_two_sum / qf_two_prod / qf_two_sqr
+# (FP64 oracle, exact — 25-bit sum / 48-bit product fit in FP64's 53-bit mantissa)
+# PLUS renorm_4 (len 5->4) + renorm (len 4->4), the QF-unique renormalization
+# primitives (Priest non-overlap invariant + exact FP64 value-preservation on
+# bounded-spread inputs, quadmath wide-spread truncation check behind the guard).
+# Calls the SHIPPED qf_math.hpp free functions directly (no mirror-and-comment —
+# unlike ff_eft_test, QF exposes its primitives as free functions). Same
+# contraction-OFF posture as ff_eft_test (Dekker twoProduct is the contraction
+# hazard). Contraction-ON reporter mirror is T3.5.
+kokkos_ep_add_eft_test(qf_eft_test)

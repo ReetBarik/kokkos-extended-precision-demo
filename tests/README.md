@@ -43,6 +43,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `dd_fma_guard_test_contract_on` | T1.5 | FMA-contraction guard, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `dd_fma_guard_baseline.txt` |
 | `ff_fma_guard_test` | T2.5 | FF analogue of `dd_fma_guard_test`, **contraction OFF** — same Dekker `twoProduct` (splitter `8193.0f` = 2¹³+1) built `-ffp-contract=off`; **fail-gates** on any mismatch. **FP64 oracle** (exact — 48-bit product fits FP64's 53-bit mantissa), so runs **unconditionally** (no LIBQUADMATH gate, no SKIP-77) |
 | `ff_fma_guard_test_contract_on` | T2.5 | FF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports only** (always exits 0), prints the mismatch count and warns on drift vs `ff_fma_guard_baseline.txt` |
+| `qf_eft_test`     | T3.1         | EFT bit-exactness for QF: `qf_two_sum` / `qf_quick_two_sum` / `qf_two_prod` / `qf_two_sqr` (splitter `8193.0f` = 2¹³+1; **FP64 oracle**, exact, no LIBQUADMATH) **plus** the QF-unique `renorm_4` (len 5→4) and `renorm` (len 4→4): Priest non-overlap invariant + **exact FP64 value-preservation** on bounded-spread inputs, and a wide-spread `__float128` truncation check (rel ≤ 2⁻⁸⁸) behind the quadmath guard. Calls the **shipped** `qf_math.hpp` free functions directly (no mirror-and-comment). Contraction OFF |
 
 ## How to run
 
@@ -255,6 +256,52 @@ mirror is T2.5.
 > (not 2¹² + 1 = 4097). The `ff_math.hpp:192` comment states this correctly; a stale
 > "2^12+1" typo in the `ff_math.hpp` license header and in the T2.1 task text is
 > noted but not fixed here (T2.1 does not modify `ff_math.hpp`).
+
+### QF EFT (Layer 1, Phase 3)
+
+`qf_eft_test.cpp` (T3.1) is the QF analogue of `ff_eft_test.cpp`. It tests the FP32
+error-free transforms QuadFloat composes on, plus the QF-unique renormalization
+primitives. **Two structural differences from T2.1:**
+
+1. **No mirror-and-comment.** `ff_eft_test` had to *duplicate* FF's twoSum / Dekker
+   twoProduct into the test because `ff_math.hpp` embeds them inside longer
+   `add`/`multiply` sequences. `qf_math.hpp` instead **exposes** the shipped
+   primitives as free functions in `Kokkos::Experimental` — `qf_two_sum`,
+   `qf_quick_two_sum`, `qf_two_prod`, `qf_two_sqr` (`qf_math.hpp:118-158`) and
+   `renorm` / `renorm_4` (`qf_math.hpp:182-257`) — so this test calls the **actual
+   shipped code**, a strictly stronger check (a mirror can drift; a direct call
+   cannot). `qf_math.hpp` is not modified (rule 4).
+2. **`renorm_4` has no FF analogue.** FF's two-word type never renormalizes a wide
+   expansion; QF's `renorm_4` (len 5→4) and `renorm` (len 4→4) are genuinely
+   QF-unique surface, and their oracle strategy is T3.1-original.
+
+**twoSum/twoProd oracle** is the same provable **FP64** as T2.1 (25-bit sum / 48-bit
+product both fit FP64's 53-bit mantissa), so that half runs unconditionally with no
+LIBQUADMATH gate. FP32 domain skips (splitter overflow `|x| ≥ FLT_MAX/8193 ≈ 2^115`,
+subnormal operands, underflow tail `< 2⁻¹⁰²`) are inherited verbatim from
+`ff_eft_test`. `qf_quick_two_sum` is tested with operands ordered `|a| ≥ |b|` (its
+precondition); `qf_two_sqr` reuses the twoProd domain on `(a,a)`.
+
+**`renorm` oracle (T3.1-original).** Two value-preservation regimes:
+
+- **Bounded spread (exact FP64, unconditional):** input words drawn inside a common
+  ≤29-bit exponent window, so the exact real sum spans ≤53 bits — it fits *exactly*
+  in FP64 **and** within QF's 96-bit capacity, so `renorm` drops nothing and
+  `(double)(Σ out) == (double)(Σ in)` is a **provable bit-equality**. This is the
+  primary gate.
+- **Wide spread (quadmath, behind the guard):** words span the full ~96-bit range so
+  `renorm` genuinely truncates; the residual is checked against QF's truncation
+  threshold **rel ≤ 2⁻⁸⁸** (256× margin above `u = 2⁻⁹⁶`, `qf_math.hpp:11`). SKIPs
+  cleanly without LIBQUADMATH — the exact FP64 bounded test still gates.
+
+The **Priest non-overlap invariant** `|f_{i+1}| ≤ ½ ulp(f_i)` (bit form
+`fl(f_i + f_{i+1}) == f_i`) is checked on every `renorm` output, oracle-independent,
+with the same underflow-tail gate (`< 2⁻¹⁰⁰`) as `ff_invariant_test` (T2.2), plus a
+packing check (no nonzero word after a zero word). Named cases cover inf/nan
+propagation through `renorm` (its `if (isinf(c0)) return;` guard must not crash).
+Device parity (Test E) re-runs `qf_two_sum` / `qf_two_prod` / `renorm_4` in a
+`parallel_for`. Registered with `kokkos_ep_add_eft_test(qf_eft_test)` (contraction
+OFF); the contraction-ON reporter mirror is T3.5.
 
 ## Non-overlap invariant (Layer 2)
 
