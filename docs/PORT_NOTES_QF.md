@@ -396,6 +396,96 @@ well-conditioned ops sit at the ~28–29-digit QF ceiling; the lowest means
 (atan-imag 26.81, tanh-imag 27.70, pow 27.8) are the branch-cut / compounded
 cases flagged above, still above the 24-digit gate.
 
+---
+
+# Porting notes: QF normalization form (T3.2 — non-overlap gate posture)
+
+## 16. QD renorm delivers Shewchuk-weak non-overlap, NOT strict Priest (T3.2 posture)
+
+`tests/qf_nonoverlap_test.cpp` (T3.2) checks the length-4 non-overlap invariant of
+every QF op. Its original posture was the **strict Priest** bound
+`|f_{i+1}| <= 1/2 ulp(f_i)`. The test surfaced a systematic, ~1e-6-rate deviation
+across nine ops that lands a word in the half-open band `(1/2 ulp, ulp]`. This
+section records the algorithmic finding that grounds T3.2's decision to adopt the
+**Shewchuk-weak** gate (`kStrictPriestGate = false`), not a code fix.
+
+**(a) Algorithmic finding — renorm is a `quick_two_sum` cascade.** QD 2.3.24's
+normalization (`renorm(c0,c1,c2,c3)` and the length-5 `renorm(c0..c4)` used after
+carry-producing ops, both Hida-Li-Bailey, `qd/include/qd/qd_inline.h`) is built
+**entirely** from `qd::quick_two_sum` — verified directly from the QD source:
+`renorm` chains `s0 = quick_two_sum(c2,c3,c3); s0 = quick_two_sum(c1,s0,c2);
+c0 = quick_two_sum(c0,s0,c1); …`. `quick_two_sum(a,b)` (a.k.a. Dekker's
+`Fast2Sum`) requires the precondition `|a| >= |b|` and returns `s = fl(a+b)` with
+the exact error `e = fl(b-(s-a))`, so `a+b = s+e` holds *exactly* (Dekker 1971).
+For a **single** pair that error is `|e| <= 1/2 ulp(s)` — Priest-strong. But a
+renormalizing *cascade* re-feeds each intermediate error into the next
+`quick_two_sum`, and the running low-order word absorbing those chained errors is
+only guaranteed to be **non-overlapping in the weak (Shewchuk) sense**
+`|f_{i+1}| <= ulp(f_i)`, never the strict Priest `1/2 ulp`. The cheap cascade
+buys speed at the cost of the tighter bound; recovering strict Priest requires an
+extra normalization sweep (Priest's renormalization), which QD deliberately does
+not perform.
+
+**(b) Citations.** The weak-vs-strong distinction and the guarantee of the fast
+cascade are Shewchuk, *"Adaptive Precision Floating-Point Arithmetic and Fast
+Robust Geometric Predicates"*, Discrete & Comput. Geom. 18:305–363 (1997) — which
+defines *nonoverlapping* expansions in the weak `<= ulp` sense and proves the fast
+renormalization preserves exactly that — versus Priest, *"Algorithms for Arbitrary
+Precision Floating Point Arithmetic"* (1991), whose stronger `<= 1/2 ulp`
+non-overlap needs the costlier renorm. For the modern tight error bounds of the
+underlying double-word building blocks (`Fast2Sum` / `2Sum`) on which the cascade
+rests, see Joldes/Muller/Popescu, *"Tight and rigorous error bounds for basic
+building blocks of double-word arithmetic"*, ACM TOMS 44:2 (2017), Theorem 2 & §4.
+The algorithmic fact for QF (renorm = `quick_two_sum` cascade ⇒ weak bound) is
+independently confirmed from the QD source cited in (a), which is the load-bearing
+evidence here; the length-4 expansion argument itself is Shewchuk/Priest (a 4-word
+expansion, beyond the double-word scope of the TOMS paper).
+
+**(c) Why this differs from §5 (and §10/§11/§15).** §5 ("Constant generation
+precision") and the *conditioning family* that cites it (§10 exp denormal tail,
+§11 real demo verdict, §15 complex-op conditioning list) concern **accuracy** —
+how many correct digits an op delivers *given its inputs*, limited by input
+conditioning, cancellation, and the FP32 denormal floor. §16 is a distinct
+category: **normalization form** — the bit-overlap *structure* of a
+correctly-normalized result, independent of how accurate that result is. A word in
+`(1/2 ulp, ulp]` is not a lost-digits problem (the value is represented to full QF
+width); it is a statement about the packing shape of the four words. Conflating
+the two would mis-file a normalization-form clarification as an accuracy defect, so
+they are kept as separate registries. This is a load-bearing distinction: real
+precision loss is assessed in T3.4 (accuracy vs quadmath), not by this invariant.
+
+**(d) Why NOT a B-task.** There is no library defect to fix. The weak bound is a
+*deliberate design choice* in QD's fast renormalization, inherent to the
+`quick_two_sum` cascade; tightening it to strict Priest would require replacing
+`renorm`/`renorm_4` with a Priest-style renormalization — a change to `qf_math.hpp`
+barred by Rule 4 (a validation task reports and stops; it does not patch the
+library). qf_math.hpp is a *faithful QD port*, and a faithful port inherits QD's
+normalization form. No B-task is warranted.
+
+**(e) Test posture adopted.** `kStrictPriestGate = false` (T3.2 commit `353193d`):
+NOVL_WEAK deviations (`1/2 ulp < |f_{i+1}| <= ulp`) are tolerated by the gate but
+**still counted per-op with worst-ratio reported** in the test log, so any drift is
+visible. NOVL_FAIL — a word `> ulp(f_i)`, a packing break (nonzero word after a
+zero), or a NaN/inf leak in a checkable slot — remains **always fatal**; that is
+what would signal genuine corruption. The strict 1/2-ulp check still runs on every
+output; only whether WEAK is fatal changed.
+
+**(f) Measured extent (strict-Priest diagnostic run, kRandomN = 2×10⁵).** 19 WEAK
+deviations across 9 ops — log:1, cos:1, sincos.cos:2, subtract:1, fmod:4,
+remainder:7, fdim:1, multiply_scalar:1, pow_int:1 — over 11,234,222 checked
+results (72,362 skipped as out-of-domain). Worst overlap ratio **1.375×** (fmod;
+1.0 = exactly 1/2 ulp, 2.0 = exactly ulp), i.e. every deviation stays strictly
+below `ulp`. **Zero NOVL_FAIL** anywhere; device tripwire (5 ops) and all 13 corner
+cases clean. fmod/remainder — the argument-reduction-heavy ops — dominate, as
+expected for a renorm-bound artifact.
+
+**(g) Downstream implication.** Every QF op cascade already relies only on
+`quick_two_sum`'s `|a| >= |b|` precondition (which the weak form preserves), not on
+½-ulp separation, so weak non-overlap is sufficient for correct downstream
+arithmetic; `qf_complex.hpp` inherits the same form through the scalar dispatch. The
+real question of *how many digits* QF delivers is orthogonal to this and is settled
+by T3.4, not by the non-overlap gate.
+
 ## License lineage (complex layer — T3.0c)
 
 `qf_complex.hpp` carries `LicenseRef-LBNL-BSD-License` — the **same** license as
