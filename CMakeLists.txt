@@ -95,8 +95,17 @@ add_executable(kokkos_ep_demo_ff_complex src/demo_ff_complex.cpp)
 target_include_directories(kokkos_ep_demo_ff_complex PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(kokkos_ep_demo_ff_complex PRIVATE Kokkos::kokkos)
 
+# ---- QF (quad-float, 4xFP32) demo (T3.0b) -----------------------------------
+# Real transcendentals exercised against the __float128 oracle (same plumbing as
+# the DD/FF real demos). Only the real demo is built: qf_complex.hpp does not
+# exist yet (complex QF deferred past T3.0b), so there is no demo_qf_complex.cpp.
+add_executable(kokkos_ep_demo_qf src/demo_qf_real.cpp)
+target_include_directories(kokkos_ep_demo_qf PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ep_demo_qf PRIVATE Kokkos::kokkos)
+
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex
                 kokkos_ep_demo_ff kokkos_ep_demo_ff_complex
+                kokkos_ep_demo_qf
         RUNTIME DESTINATION bin)
 
 # ---- Tests (T0.1: backend-parameterized harness) ----------------------------
