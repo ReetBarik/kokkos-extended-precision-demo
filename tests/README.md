@@ -46,6 +46,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `qf_eft_test`     | T3.1         | EFT bit-exactness for QF: `qf_two_sum` / `qf_quick_two_sum` / `qf_two_prod` / `qf_two_sqr` (splitter `8193.0f` = 2¹³+1; **FP64 oracle**, exact, no LIBQUADMATH) **plus** the QF-unique `renorm_4` (len 5→4) and `renorm` (len 4→4): Priest non-overlap invariant + **exact FP64 value-preservation** on bounded-spread inputs, and a wide-spread `__float128` truncation check (rel ≤ 2⁻⁸⁸) behind the quadmath guard. Calls the **shipped** `qf_math.hpp` free functions directly (no mirror-and-comment). Contraction OFF |
 | `qf_nonoverlap_test` | T3.2      | Priest **length-4** non-overlap invariant `\|f_{i+1}\| ≤ ½ ulp(f_i)` (i=0,1,2, mathematical ½-ulp form via `frexp`) on the **output** of every QF op returning a `QuadFloat` (arithmetic incl. `ieee_add`/`sloppy_add`/`divide_accurate`, `sqr`/`sqrt`, all transcendentals, joint `sincos`/`sinhcosh` components, `angle`, `multiply_scalar`, `mul_pwr2` **(±2ᵏ only)**, `fma`, `pow_int`, round family, utilities); oracle-independent (runs without LIBQUADMATH), `__float128` only **enriches inputs** to ~96-bit ordered width behind the quadmath gate. QF analogue of `ff_invariant_test`; trig domain has **no tiny-arg lower bound** (QF `sincos` has no FFCSSNR stall). Two-tier classifier (`NOVL_OK`/`NOVL_WEAK`/`NOVL_FAIL`); **ships RED under the default strict Priest gate** because QD `renorm` gives only Shewchuk-weak `≤ ulp` non-overlap — flip `kStrictPriestGate` for the weak gate (see §QF non-overlap). Plain helper (no contraction posture) |
 | `qf_property_test` | T3.3         | QF analogue of `ff_property_test`: **Group A** 12 bit-exact identities (no oracle — additive inverse/zero, `a·0`/`a·1`/`a·(-1)`, double negation, `abs` sign branches/`abs(-a)`, **add commutativity bit-exact on WIDE 4-word operands** — a QF strengthening over FF/DD's single-word restriction — and the `mul_pwr2` ±2ᵏ round-trip), **Group B** 15 tolerance identities vs `__float128` (**mean-gated** at an absolute **ulp of U=2⁻⁹⁶** floor — 10 ulp = 27.90 digits default, 30 ulp = 27.42 for the exp-denormal-tail-limited `exp(log)`/`pow(x,2)` per PORT_NOTES_QF §10 — **NOT** the DD/FF `−log10(N·u²)` statistical floor, since QF is a quad-word whose resolution IS U), **Test C** named-constant regressions (target ≥27 of QF's 29 digits). Includes the T2.3 **B4 exp-eps** pattern (`exp(a+eps)≈exp(a)(1+eps)`) — which does **NOT** recur in QF (`qf_math.hpp` exp uses `eps=1e-28f` coarser than U). Group A unconditional; Group B / Test C runtime-SKIP without LIBQUADMATH. Plain helper (no contraction posture) |
+| `qf_accuracy_test` | T3.4         | QF analogue of `ff_accuracy_test` (T2.4) / `dd_accuracy_test` (T1.4): per-op digits of accuracy vs `__float128` for **every** QF op returning a `QuadFloat` with a quadmath counterpart (49 scored + 5 skipped = T3.2's 54). Three passes per op — **narrow** (Route-A over the §11 demo domains) + **broad** (`make_wide_input` ~96-bit ordered) + **corpus** (named §3/§4 accessor where one exists) — combined into one (min, mean, n). **Fail-gates on the MEAN** against the QF quad-word **absolute ulp-of-U** floor (10 ulp = **27.90** default; 30 ulp = **27.42** for the exp-family output-denormal tail, PORT_NOTES_QF §10) — **NOT** the DD/FF `−log10(N·u²)` statistical floor (QF is a quad-word whose resolution IS U=2⁻⁹⁶); low mins for the shared PORT_NOTES §5 registry ops → **EXPECTED-MIN-DROP**. Oracle evaluated at the **exact widened input** `qf_to_q(input)` (QF's ~29 digits are finer than a double, so the broad regime's sub-double bits matter — a QF-specific twist over DD/FF's `(float128)x` oracle). exp/exp2/exp10 domains narrowed to keep the quad-word result in FP32 normal range (§10). Runtime-SKIPs without LIBQUADMATH. Plain helper (no contraction flags) |
 
 ## How to run
 
@@ -712,6 +713,89 @@ width, so DD and FF read the same table). Registered with the plain
 `dd_accuracy_test`. Per rule 4, `ff_math.hpp` / `ff_complex.hpp` are **not**
 modified: any op whose mean falls below tolerance is REPORTED (op, pass, offending
 input, digit count) and fails; it is not patched or xfailed.
+
+### QF differential accuracy (Layer 4, Phase 3)
+
+`qf_accuracy_test.cpp` (**T3.4**) is the QF (QuadFloat, 4×FP32) analogue of
+`ff_accuracy_test.cpp` / `dd_accuracy_test.cpp`, mirroring their structure end to
+end. As with T3.3, the two substantive changes are the **precision scale** and the
+**tolerance model**:
+
+- **Scale.** QF's resolution is `U = 2⁻⁹⁶` (four FP32 limbs ≈ 96 bits), digits
+  capped at **29** (`kMaxDig`).
+- **Tolerance model — T3.3's absolute ulp-of-U floor, NOT the DD/FF statistical
+  one.** DD/FF are double-word (nominal precision `u²`) and gate on
+  `−log10(N·u²)`. QF is a *quad-word* — its resolution **is** `U`, not some `u⁴` —
+  so, exactly as T3.3 established, this test uses the plan's per-op **absolute ulp
+  floor**, gating on the **mean**:
+  `digits(k ulp) = 96·log10(2) − log10(k)`, i.e. **10 ulp → 27.90** (default) and
+  **30 ulp → 27.42** (the exp-family output-denormal tail, PORT_NOTES_QF §10).
+
+**Four regimes, three passes.** The plan's broad / narrow / near-edge / corpus
+regimes are delivered as three passes combined per op (min over all, mean weighted
+by count): **narrow** random (Route-A `QuadFloat(double)` over the op's
+well-conditioned domain, taken from `src/demo_qf_real.cpp`'s `fill_inputs` = the
+§11 reference domains), **broad** random (the same domain enriched to a full
+~96-bit ordered QuadFloat via `make_wide_input`, copied from `qf_nonoverlap_test`),
+and the **corpus / near-edge** pass (the PORT_NOTES §3/§4 named accessor where one
+exists — `exp_overflow`, `trig_near_pi`, `sinh_cosh_small`, `atanh_small`,
+`remainder_regression` — else the generic bundler). Out-of-domain corpus values are
+**skipped, not failed**.
+
+**Oracle at the exact widened input (a QF-specific twist).** T1.4/T2.4 evaluate the
+oracle at the nominal double `(float128)x`; that is exact for DD/FF because their
+claimed precision is coarser than a double. QF claims ~29 digits — *finer* than a
+double — so this test evaluates the oracle at the **exact widened value**
+`qf_to_q(input)` (sum of the four input words). For the narrow regime the two
+coincide exactly; for the broad regime (whose inputs carry sub-double bits by
+construction) it is the only honest choice.
+
+**exp-family domain narrowing (documented deviation from §11).** `qf_math.hpp` exp
+guards at `a.f0 ≥ 88`; for sufficiently negative arguments the quad-word result's
+low limbs fall into the FP32 output-denormal band (§10), which is why the demo/§11
+sample of `exp` over [−80,80] reads mean **25.99** (below even the 30-ulp floor). To
+gate the mean honestly the random passes narrow the negative end so the full
+quad-word result stays in FP32 normal range (`exp` [−35,80], `exp2` [−50,120],
+`exp10` [−15,30]); the excluded tail is the §10 conditioning limit (min-drop
+exempt), exercised at the high edge by `exp_overflow` and cited via
+`lookup_expected_min_drop("exp")`. exp/exp2/exp10 gate at 30 ulp; `expm1`
+(result ≥ −1, no denormal tail) at 10 ulp.
+
+**Round-family oracle / tie semantics.** `round_to_nearest_int`/`round` use
+`qf_nint = floor(d+0.5)` (round-half-up). On continuous random inputs (and the
+generic corpus, which has no exact half-integers) round-half-up, ties-to-even and
+ties-away all agree — ties are measure-zero — so the oracle is
+`Kokkos::round/ceil/floor/trunc` (matching the demo). The `nint_half_integer`
+corpus is **deliberately not used** for the round-family (exact-tie behavior is a
+separate, out-of-scope concern). *(This differs from T1.4/T2.4, which used a
+`nearbyint` ties-to-even oracle — those backends' `nint` rounds to even; QF's
+rounds half-up, and on continuous inputs the distinction never surfaces.)*
+
+**Op surface (49 scored + 5 skipped = T3.2's 54).** Every QF op returning a
+`QuadFloat` with a quadmath analogue is scored: 29 unary
+(abs/negate/sqr/sqrt, round-family ×5, exp-family ×4, log-family ×4, trig ×3,
+inverse-trig ×3, hyperbolic ×3, inverse-hyperbolic ×3), 4 two-output components
+(`sincos.sin`/`.cos`, `sinhcosh.sinh`/`.cosh` — SIN/SINH first per §12), 13 binary
+(add/subtract/multiply/divide/pow/atan2/hypot/fmod/remainder/copysign/fmax/fmin/
+fdim), and 3 custom (`multiply_scalar`, `fma`, `pow_int`). Skipped with in-source
+rationale (5): `sloppy_add` (`add()` is its public alias), `ieee_add` (internal, no
+distinct public op), `divide_accurate` (internal, `divide()` wraps it), `mul_pwr2`
+(exact power-of-2 scaling — exact by construction, covered bit-exactly by T3.3 A12),
+`angle` (identical to `atan2(y,x)`). `qf_math.hpp` has **no** erf/erfc/tgamma, so
+T2.4's three RED candidates have no QF counterpart.
+
+`kNarrowN = kBroadN = 10⁵` (2×10⁵ random/op), tuned down from the plan's 10⁶ for the
+same wall-time reason as T3.2/T3.3 (the absolute ulp floor is N-independent, so the
+reduction does not shift the gate). The whole file is `#ifdef
+KOKKOS_EP_HAVE_QUADMATH` and runtime-SKIPs (77) otherwise. Every pass runs through
+`Kokkos::parallel_for` on the Serial `DefaultExecutionSpace` (so the whole test is
+the device path); a representative subset (`add`/`multiply`/`sqrt`/`exp`/`sin`) is
+re-run under fresh seeds as an explicit device-parity checkpoint. Registered with
+the plain `kokkos_ep_add_test` helper (no contraction flags), mirroring
+`dd_accuracy_test` / `ff_accuracy_test`. Per rule 4, `qf_math.hpp` is **not**
+modified: any op whose mean falls below tolerance is REPORTED (op, pass, offending
+input, digit count) and fails as a candidate B-task for Reet to file; it is not
+patched or xfailed.
 
 ## FMA-contraction guard (Layer 5)
 

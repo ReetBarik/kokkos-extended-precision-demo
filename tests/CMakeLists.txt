@@ -231,3 +231,14 @@ kokkos_ep_add_test(qf_nonoverlap_test)
 # helper (NOT the EFT helper): algebraic identities are FMA-contraction agnostic.
 # QF analogue of ff_property_test (T2.3).
 kokkos_ep_add_test(qf_property_test)
+
+# T3.4 differential accuracy vs quadmath for QF: per-op digits-of-accuracy against
+# the __float128 oracle (runtime-SKIPs without LIBQUADMATH). QF analogue of
+# ff_accuracy_test (T2.4) / dd_accuracy_test (T1.4). Scores every QF op returning a
+# QuadFloat with a quadmath counterpart across narrow(Route-A) + broad(~96-bit) +
+# corpus passes; gates on the MEAN against the QF quad-word absolute ulp-of-U floor
+# (10 ulp = 27.90 digits default; 30 ulp = 27.42 for the exp-family output-denormal
+# tail, PORT_NOTES_QF §10), with low mins for §5-registry ops reported as
+# EXPECTED-MIN-DROP. Plain helper — NOT an EFT test, so no contraction flags
+# (mirrors dd_accuracy_test / ff_accuracy_test registration).
+kokkos_ep_add_test(qf_accuracy_test)
