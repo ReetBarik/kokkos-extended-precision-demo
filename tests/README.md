@@ -49,6 +49,7 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `qf_accuracy_test` | T3.4         | QF analogue of `ff_accuracy_test` (T2.4) / `dd_accuracy_test` (T1.4): per-op digits of accuracy vs `__float128` for **every** QF op returning a `QuadFloat` with a quadmath counterpart (49 scored + 5 skipped = T3.2's 54). Three passes per op — **narrow** (Route-A over the §11 demo domains) + **broad** (`make_wide_input` ~96-bit ordered) + **corpus** (named §3/§4 accessor where one exists) — combined into one (min, mean, n). **Fail-gates on the MEAN** against the QF quad-word **absolute ulp-of-U** floor (10 ulp = **27.90** default; 30 ulp = **27.42** for the exp-family output-denormal tail, PORT_NOTES_QF §10) — **NOT** the DD/FF `−log10(N·u²)` statistical floor (QF is a quad-word whose resolution IS U=2⁻⁹⁶); low mins for the shared PORT_NOTES §5 registry ops → **EXPECTED-MIN-DROP**. Oracle evaluated at the **exact widened input** `qf_to_q(input)` (QF's ~29 digits are finer than a double, so the broad regime's sub-double bits matter — a QF-specific twist over DD/FF's `(float128)x` oracle). exp/exp2/exp10 domains narrowed to keep the quad-word result in FP32 normal range (§10). Runtime-SKIPs without LIBQUADMATH. Plain helper (no contraction flags) |
 | `qf_fma_guard_test` | T3.5 | QF analogue of `ff_fma_guard_test`, **contraction OFF** — the **shipped** Dekker EFTs `qf_two_prod` **and** `qf_two_sqr` (splitter `8193.0f` = 2¹³+1) built `-ffp-contract=off`; **fail-gates** on any collapsed/wrong error term (a stronger form of T3.1). Calls the shipped `qf_math.hpp` primitives **directly** (no mirror-and-comment, cf. `qf_eft_test`). **FP64 oracle** (exact — 48-bit product fits FP64's 53-bit mantissa), so runs **unconditionally** (no LIBQUADMATH gate, no SKIP-77). `qf_two_sum` included as a contraction-immune **control** |
 | `qf_fma_guard_test_contract_on` | T3.5 | QF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports** per-op three-way `{ERR_ZERO / ERR_NONZERO_CORRECT / ERR_NONZERO_WRONG}` counts and warns on drift vs `qf_fma_guard_baseline.txt`. **PASS iff `ERR_NONZERO_WRONG == 0`** (any `ERR_ZERO`/`CORRECT` mix is acceptable — collapse under contraction is *informative*, not a fault of `qf_math.hpp`) |
+| `qf_cancellation_test` | T3.6    | QF analogue of `dd_e2e_test` / `ff_cancellation_test`: same four cancellation kernels (√(x²+1)−x, Σ1/k², Machin's π, alternating harmonic) scored in digits vs `__float128`/closed-form oracles; **mean-gated at 29−3 = 26.0** (QF's cap minus headroom); K1 naive-vs-stable compares QF against **FP32** (QF's base scalar) at x∈{1e2,1e4,1e6}; runtime-SKIPs without LIBQUADMATH |
 
 ## How to run
 
@@ -1047,6 +1048,42 @@ concern the plan flags for FP32 does not bite here). Per-kernel measured results
 are printed by the test and recorded in the T2.5 DONE block. Registered with the
 plain `kokkos_ep_add_test` helper (no contraction flags — see the CMake comment on
 why K1's naive mul-then-sub adjacency is not a gated-path hazard).
+
+### QF end-to-end cancellation (Layer 6, Phase 3)
+
+`qf_cancellation_test.cpp` (**T3.6**) is the QF analogue of `dd_e2e_test.cpp`
+(T1.6) and `ff_cancellation_test.cpp` (T2.6), mirroring their structure verbatim
+(same four kernels, same two-oracle strategy, same K1 gated-stable + reported-naive
+shape, host-side, quadmath-gated, `qf_math.hpp` / `qf_complex.hpp` untouched). The
+substantive change is the **precision scale**; the K1 base-scalar and magnitude
+choices follow **T2.6's FF precedent**, because QF's base scalar is FP32, exactly
+as FF's is:
+
+- **Gate.** `mean_digits ≥ 26.0`, derived by the **same "cap − 3" formula** T1.6
+  and T2.6 used: QF's harness cap is the QF-local `kMaxDig = 29` (4×FP32 ≈ 96 bits
+  ≈ 28.9 decimal digits), so `29 − 3 = 26.0` (DD used `31 − 3 = 28.0`; FF used
+  `14 − 3 = 11.0`). Computed from `kMaxDig` at compile time, not hardcoded.
+- **K1 baseline = FP32, not FP64.** T1.6 compared naive-DD against naive-FP64 (DD's
+  1-word base). The faithful QF mirror compares naive-QF against naive-**FP32** (QF's
+  1-word base) — the same choice T2.6 made. QF's advertised advantage is over its
+  own base scalar, and for the small-x cases FP64 can be *wider* than the
+  target-scaled QF quad-word, so an FP64 baseline would misrepresent QF's lift.
+- **K1 magnitudes {1e2, 1e4, 1e6}** (T2.6's set). The "+1" collapse that drives the
+  FP32 baseline to 0 is determined by the FP32 **high-word** arithmetic — plain FP32
+  loses the `+1` in `x²+1` once `x² > 2²⁴` (x ≳ 4100) — not by QF's composed
+  quad-word precision. A pilot confirmed the cancellation gradient IS present at this
+  set: measured naive-QF reads {28.23, 23.50, 23.87} at x ∈ {1e2, 1e4, 1e6} (not
+  uniform 29), while FP32 naive collapses to {3.28, 0.00, 0.00} — so both the
+  gradient and the FP32→QF lift are visible without extending upward to {1e2,1e6,1e10}.
+
+K2/K4 keep N = 10⁶: at that N the smallest term (1/N = 1e-6 for K4, 1/N² = 1e-12 for
+K2) stays ~15 decades above QF's `u = 2⁻⁹⁶ ≈ 1.3e-29`, so no term stalls — the
+FP32-narrow term-stall concern that gated T2.6's calibration does not bite here at
+all (QF's `u` is far finer). Per-kernel measured means (GCC 13.3.0, Serial):
+`K1_stable` 29.00 (capped), `K2_basel` 27.67, `K3_machin` 28.73, `K4_alt_harmonic`
+28.64 — all PASS by comfortable margins (K3 clears by +2.73, no §10 denormal-tail
+hazard on the atan path). Registered with the plain `kokkos_ep_add_test` helper
+(no contraction flags — same K1 rationale as T1.6/T2.6, see the CMake comment).
 
 ## Framework
 

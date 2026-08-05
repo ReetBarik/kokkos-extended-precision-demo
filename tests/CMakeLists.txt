@@ -255,3 +255,15 @@ kokkos_ep_add_test(qf_accuracy_test)
 # LIBQUADMATH), so both variants run unconditionally (no quadmath gate / SKIP-77).
 kokkos_ep_add_eft_test(qf_fma_guard_test)              # -> qf_fma_guard_test              (OFF, gates)
 kokkos_ep_add_eft_test_contract_on(qf_fma_guard_test)  # -> qf_fma_guard_test_contract_on  (ON, reports)
+
+# T3.6 end-to-end cancellation kernels for QF: quadmath-oracle-gated, host-side.
+# QF analogue of dd_e2e_test (T1.6) / ff_cancellation_test (T2.6). Plain helper —
+# NOT an EFT test, so no contraction flags. Same K1 rationale as T2.6: the GATED
+# path is K1_stable = 1/(sqrt(x²+1)+x), which has no subtractive-cancellation
+# adjacency to contract; K1's naive form sqrt(x²+1)-x has a mul-then-sub adjacency
+# an FMA *could* contract, but K1_naive is REPORTED, never gated, so a
+# contraction-induced shift in its (already low-digit) result cannot flip a
+# pass/fail. The Dekker-twoProduct contraction hazard the EFT helper guards is on no
+# gated path here (it is covered by qf_fma_guard_test, T3.5). So this test mirrors
+# dd_e2e_test / ff_cancellation_test registration exactly (no EFT helper).
+kokkos_ep_add_test(qf_cancellation_test)
