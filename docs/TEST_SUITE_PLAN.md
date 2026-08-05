@@ -951,6 +951,55 @@ screenful each.
   other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
 
+**B8: FF `divide` — Dekker splitter overflow at large divisors (surfaced by B4).**
+
+- **Read first:** `ff_math.hpp:209` (divide, the Dekker splitter with
+  `split = 8193.0f`); PORT_NOTES §4a (exp large-input NaN from splitter overflow —
+  same bug class, different site); B4 stub above (the surfacing investigation,
+  including the instrumentation table and the empirical clean ceiling); T2.3 B3/B9
+  domain narrowing (the tests to restore after fix).
+- **Root cause.** `ff_math.hpp:209` divide performs `b.hi * split - b.hi` inside its
+  Dekker splitting step to extract the high half of the divisor. For
+  `|b.hi| > FLT_MAX / 8193 ≈ 4.15e34`, `b.hi * split` overflows to `±∞`; the
+  subtraction `∞ − ∞ = NaN` corrupts the split, and the NaN propagates into every
+  downstream product / difference / accumulation. Because divide is called by
+  `log()`'s Newton iteration with divisor `exp(b) ≈ a`, any `log(x)` for
+  `x ≳ e^79.7 ≈ 1.5e34` produces NaN via this path, which then feeds back into
+  `exp()` on the next Newton step and hangs the Taylor loop at the 60-iteration cap
+  (surfaced by B4).
+- **Empirical evidence (from B4's investigation).** Probe over the B3/B9 identity
+  tests: `[-79.7, 79.7]` → 0 FFEXP iteration-limit prints; `[-80, 80]` → 891 prints;
+  `[-85, 85]` → 15,491 prints. Linear-ish growth with the divide-domain violation
+  frequency.
+- **Fix options.** (a) **Scaled splitter** — detect `|b.hi| > FLT_MAX / (split + 1)`
+  and pre-scale `b` down (divide by a power of 2), do the split, unscale the result.
+  Matches PORT_NOTES §4a's shape (§4a scaled the input in exp's final scaling). Small
+  diff, preserves the Dekker structure, framework-agnostic. **Preference: (a).**
+  (b) Alternative divide algorithm for the overflow-region operands (e.g. long
+  division / non-Dekker path). Larger diff; only if (a) fails.
+- **Acceptance gate.** `ff_math.hpp:209` divide produces finite outputs (no NaN, no
+  inf unless the true quotient overflows FP32) for all in-domain divisors `|b.hi|`
+  up to `FLT_MAX` (safety-margined; the exact ceiling is determined by FP32's
+  overflow, NOT by 4.15e34). T2.3 `ff_property_test` B3 (log(exp a)≈a) and B9
+  (exp(a)·exp(-a)≈1) domains restored from `[-69, 69]` to `[-79, 79]`
+  (safety-margined one integer under 79.7). **Zero `FFEXP: iteration limit` prints**
+  across the restored B3/B9 range. Full ctest green — the 2 deliberately-preserved
+  REDs (`dd_accuracy_test`, `ff_accuracy_test`) stay digit-for-digit unchanged
+  EXCEPT `ff_accuracy_test`'s exp / log rows may IMPROVE (report delta, do not gate
+  on it). All four demos build and run RC 0.
+- **Scope-out.** `ff_math.hpp:209` divide only. Do NOT touch other splitter-using
+  primitives (multiply, sqr, two_prod, etc.) unless the same bug is empirically
+  demonstrated there under a probe; per the B4 precedent, hypothesized-but-unverified
+  bugs get their own tasks, not silent scope expansion. Do NOT touch `qf_math.hpp` /
+  `dd_math.hpp` / any `*_complex.hpp`. Do NOT modify PORT_NOTES §4a (this is a NEW
+  site, same class — reference §4a, don't rewrite it). If a new PORT_NOTES section is
+  warranted (documenting the divide-site fix as a companion to §4a), draft it
+  separately for Reet's ratification, don't ship inline.
+- **Cross-references.** Same bug class as PORT_NOTES §4a; may share a fix pattern
+  (scaled input) with §4a's exp final scaling. Not related to B1/B2/B3 (DD-side,
+  transcendental accuracy). Independent of B5/B6/B7 (FF erf/erfc/tgamma) — those can
+  be worked in any order relative to B8.
+
 ### Phase 2 — FF validation (6 tasks)
 
 FF library is already implemented on `fffunKokkos`. Phase 2 = validate
