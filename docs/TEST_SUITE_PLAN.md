@@ -2279,9 +2279,89 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   mirror of T3.1's `qf_eft_test`. Ready to draft when Reet asks.
 - See `faf35d5` for the code diff and this DONE block for the outcome.
 
-**T3.5: FMA-contraction guard for QF.**
+**T3.5: FMA-contraction guard for QF. (DONE)**
 
 - Same as T1.5/T2.5 for QF's Dekker sequences.
+
+- Executed 2026-08-05. Task commit `c71690b` on `qffunKokkos`; DONE block +
+  docs-pointer this bundle (T3.4-style two-commit clean-GREEN close). Fifth Phase-3
+  *validation* task — the T1.5/T2.5 analogue for the QF backend (**5/6 Phase-3
+  validation tasks done**: T3.1 EFT, T3.2 non-overlap, T3.3 property, T3.4 accuracy,
+  T3.5 FMA-guard).
+- **What shipped (4 files, +830 LOC).** `tests/qf_fma_guard_test.cpp` (new, +714):
+  the Layer-5 positive test of the FMA-contraction posture QF's EFTs depend on.
+  `tests/qf_fma_guard_baseline.txt` (new, +31): the contraction-ON drift baseline,
+  armed at `0`. `tests/CMakeLists.txt` (+13): the two-target dual registration.
+  `tests/README.md` (+72): two registry rows + a "QF FMA-contraction guard (Layer 5,
+  Phase 3)" section.
+- **Two-target dual-registration pattern (OFF gate + ON reporter).**
+  `kokkos_ep_add_eft_test(qf_fma_guard_test)` builds `qf_fma_guard_test`
+  (`-ffp-contract=off`, `KOKKOS_EP_CONTRACTION_MODE=0`, **fail-gates**);
+  `kokkos_ep_add_eft_test_contract_on(qf_fma_guard_test)` builds
+  `qf_fma_guard_test_contract_on` (`-ffp-contract=fast`,
+  `KOKKOS_EP_CONTRACTION_MODE=1` + `KOKKOS_EP_BASELINE_PATH`, **reports**). Both
+  helpers are the shared ones introduced by T1.5 and generalized by T2.5 (baseline
+  path derived from target name) — **no helper churn in T3.5**, single-source /
+  two-targets exactly as DD/FF.
+- **Per-op acceptance-gate numbers.** `qf_two_prod` (`a1*b1 − p`): **511,988 checks**
+  (host + device). `qf_two_sqr` (`hi*hi − q`): **399,286 checks** (host + device).
+  `F = ERR_ZERO + ERR_NONZERO_WRONG = 0` under **both** postures; **ERR_NONZERO_WRONG
+  = 0** under both postures. `qf_two_sum` CONTROL (contraction-immune) exact under
+  both postures (260,121 tested, 84 wide-exponent sums skipped by the FP32
+  oracle-faithful guard). No named-case corner failure (11 pass / 3 skip / 0 fail).
+  `ctest -R qf_fma_guard` → **2/2 PASS, 0.85 s** (#21 / #22, 0.42 s each).
+- **GCC 13.3.0 contraction observation.** On baseline x86-64 (no `-mfma` /
+  `-march=native`) GCC does **NOT** contract `a1*b1 − p` (qf_two_prod) or `hi*hi − q`
+  (qf_two_sqr): `ERR_ZERO = 0` for both under `-ffp-contract=fast`. Same outcome as
+  T1.5 (DD) and T2.5 (FF) — `-ffp-contract=off` is belt+suspenders on this ISA
+  target. Because the test calls the SHIPPED primitives directly (see below), this
+  characterizes GCC's contraction of `qf_math.hpp`'s own source, not a copy.
+- **Baseline armed at `0`** in `tests/qf_fma_guard_baseline.txt`: each ON run compares
+  its live `F` to the baseline and prints `baseline: OK` or `*** DRIFT ***`
+  (WARN-only, never a failure). Drift means the toolchain's contraction behavior
+  changed (compiler upgrade, new FMA-bearing ISA target, or flag change) — a signal
+  to investigate, not a gate.
+- **Deviation 1 — no mirror-and-comment; calls the SHIPPED `qf_math.hpp` primitives
+  directly** (`qf_two_prod` / `qf_two_sqr` / `qf_two_sum`, `qf_math.hpp:118-158`).
+  T2.5's FF guard mirrored the `twoProduct` sequence because `ff_math.hpp` embeds it
+  inside `multiply()` with no free-function handle; `qf_math.hpp` exposes the EFTs as
+  free functions, so T3.5 compiles the shipped source under the ON flags. Precedent:
+  T3.1's `qf_eft_test` took the identical divergence from T2.1's `ff_eft_test`.
+  Strictly stronger — a mirror can drift from the shipped code; this cannot.
+- **Deviation 2 — `qf_two_sqr` is ALSO guarded** (`hi*hi − q`, a second Dekker
+  sequence with its own contraction hazard). FF exposes no squaring EFT, so T2.5 was
+  `twoProduct`-only. Matches T3.1's op surface (T3.1 likewise added `qf_two_sqr` over
+  T2.1).
+- **Design refinement over T2.5's binary F — three-way classification, ratified
+  in-code.** Each observable input is bucketed TRIVIAL (`e_ref == 0`, the error term
+  is legitimately zero) / **ERR_NONZERO_CORRECT** (Dekker identity holds) /
+  **ERR_ZERO** (error term collapsed to zero, the contraction signature) /
+  **ERR_NONZERO_WRONG** (error term nonzero but violates the Dekker identity — a
+  genuinely-broken term). This distinguishes "contracted-to-zero" (informative — a
+  correct implementation and a contracted one both yield `lo == 0` when `e_ref` is
+  legitimately zero, so ZERO is not per se a fault of `qf_math.hpp`) from
+  "contracted-to-wrong" (the ONE real bug case). Gate policy: **OFF fails on
+  `ERR_ZERO || ERR_NONZERO_WRONG`** (the strict contraction gate); **ON PASSes iff
+  `ERR_NONZERO_WRONG == 0`** (any ZERO/CORRECT mix acceptable — ZERO is informative,
+  not a fault). T2.5's binary F could not tell the two apart and exited 0 on all
+  contraction; T3.5 can, and fails the ON variant only on the genuinely-broken
+  bucket. On this toolchain all buckets but CORRECT are 0, so ON passes either way.
+- **FP64 oracle, no quadmath gate.** Ground truth is exact FP64: an FP32 product
+  needs ≤48 bits ≤ FP64's 53-bit mantissa, so the `(hi, lo)` decomposition reference
+  is algebraically exact and contraction-immune — no external library. Both variants
+  therefore run **unconditionally** (no `KOKKOS_EP_HAVE_QUADMATH` gate, no runtime
+  SKIP-77). Same posture `ff_fma_guard_test` / `qf_eft_test` established.
+- **Rule 4 respected.** `qf_math.hpp` / `qf_complex.hpp` untouched (only `#include`d);
+  no other `*_math.hpp` / `*_complex.hpp` touched. **PORT_NOTES_QF §5 NOT extended** —
+  FMA contraction is a compiler characterization, not input conditioning; `tests/README.md`
+  documents it correctly, so no PORT_NOTES drift. `main` untouched; `qffunKokkos` not
+  merged.
+- **Scope-out.** `qf_two_prod` + `qf_two_sqr` only — no complex EFTs, no other ops;
+  `qf_two_sum` is a contraction-immune CONTROL, not a target under test. No new
+  B-task stubs — 0 misses, nothing to log (clean GREEN, like T3.4).
+- Depends on T0.1, T0.2, T3.0a, T3.0b, T3.1.
+- **Phase 3 validation: 5 of 6 tasks DONE** (T3.1, T3.2, T3.3, T3.4, T3.5). T3.6
+  remains (e2e cancellation kernels).
 
 **T3.6: End-to-end cancellation kernels for QF.**
 
