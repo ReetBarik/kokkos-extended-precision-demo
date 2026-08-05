@@ -2364,13 +2364,103 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   remains (e2e cancellation kernels).
 - See `c71690b` for the code diff and this DONE block for the outcome.
 
-**T3.6: End-to-end cancellation kernels for QF.**
+**T3.6: End-to-end cancellation kernels for QF. (DONE)**
 
 - Same kernels as T1.6/T2.6, expect ~29 digits accuracy.
-- Adversarial kernels stronger than FF/DD can express: `sub(a, a·(1 +
-  1e-25))` should still resolve; near-π `sin`/`cos` should now be
-  distinguishable from noise (though not fully accurate — see
-  PORT_NOTES §5).
+
+- Executed 2026-08-05. Task commit `64aac2d` on `qffunKokkos`; DONE block +
+  docs-pointer this bundle (T3.5-style two-commit clean-GREEN close). **Sixth and
+  final Phase-3 validation task — the T1.6/T2.6 analogue for the QF backend.**
+- **What shipped (3 files, +511 LOC).** `tests/qf_cancellation_test.cpp` (new,
+  +462): the Layer-6 end-to-end test — four classic cancellation-hostile kernels
+  evaluated in QF (4×FP32, ~29 digits) and scored in digits of accuracy against
+  `__float128` / closed-form oracles, mean-gated at 26.0 digits. `tests/CMakeLists.txt`
+  (+12): the plain-helper registration + contraction rationale comment.
+  `tests/README.md` (+37): registry row + a "QF end-to-end cancellation (Layer 6,
+  Phase 3)" section. Structure mirrors T1.6 (`dd_e2e_test`) / T2.6
+  (`ff_cancellation_test`) verbatim; the mechanical change is the precision scale
+  (QF `kMaxDig = 29` vs DD's 31 / FF's 14).
+- **The four kernels (host-side, inherently serial reductions/recurrences).**
+  `K1` = `√(x²+1) − x` at x ∈ {1e2, 1e4, 1e6}; `K2` = `Σ 1/k²`, k=1..10⁶ (Basel,
+  oracle π²/6); `K3` = Machin's `π = 16·atan(1/5) − 4·atan(1/239)` (oracle
+  `QuadFloat_pi()`); `K4` = `Σ (−1)^(k+1)/k`, k=1..10⁶ (alternating harmonic, oracle
+  ln 2). Whole file is `#ifdef KOKKOS_EP_HAVE_QUADMATH`; runtime-SKIP 77 without
+  libquadmath. `qf_math.hpp` / `qf_complex.hpp` NOT modified (rule 4);
+  `qf_complex.hpp` NOT included (real-only, matching T1.6/T2.6 discipline).
+- **Two-oracle strategy (K2, K4).** Same split as T1.6/T2.6. The
+  QF-vs-quadmath-partial-sum comparison carries the arithmetic-precision claim:
+  identical N, identical summation order, identical terms, so it isolates QF's
+  accumulation quality from truncation (gated at `kTol = 26.0`). The
+  QF-vs-closed-form comparison (K2 vs π²/6, K4 vs ln 2) is a truncation-limited
+  sanity check, gated at `truncation_floor − 1 = 5.0`. At N=10⁶ the floor is ~6
+  digits: the Basel tail Σ_{N+1}^∞ 1/k² ≈ 1/N ≈ 1e-6, and the alternating-series
+  error is bounded by the first omitted term ≈ 1/N.
+- **Tolerance rationale.** `kTol = kMaxDig − 3 = 29 − 3 = 26.0`, the SAME "cap − 3"
+  formula T1.6 (`31 − 3 = 28.0`) and T2.6 (`14 − 3 = 11.0`) used — ~3 digits of
+  headroom for accumulated round-off in composed / 10⁶-term kernels, applied
+  uniformly to the arithmetic-precision comparisons. Computed from `kMaxDig` at
+  compile time, not hardcoded.
+- **QF-local harness helpers (correct call, avoids shared-harness churn).**
+  `test_utils.hpp` carries `BackendTraits<DD>` and `<FF>` but NOT `<QF>`
+  (`test_utils.hpp:81` is a `TODO(Phase 3)` placeholder; the primary template is
+  undefined). Rather than touch the shared harness other tasks own (rule 1/4), this
+  file carries the QF-local `kMaxDig = 29.0` / `qf_to_q` / `qf_digits` helpers
+  directly — IDENTICAL to `qf_accuracy_test` (T3.4) and `qf_property_test` (T3.3),
+  which established the pattern. `kMaxDig` matches those files and
+  `src/demo_qf_real.cpp`.
+- **K2/K4 iteration counts.** Kept at N = 10⁶. The smallest term (1/N = 1e-6 for K4,
+  1/N² = 1e-12 for K2) sits ~15 decades above QF's `u = 2⁻⁹⁶ ≈ 1.3e-29`, so no term
+  stalls into the precision floor — the FP32-narrow term-stall concern that gated
+  T2.6's calibration does not bite QF at all (QF's `u` is far finer than FF's).
+- **K1 baseline = FP32, not FP64 (same rationale as T2.6).** T1.6 compared naive-DD
+  against naive-FP64 (DD's 1-word base). The faithful QF mirror compares naive-QF
+  (4×FP32) against naive-**FP32** (QF's 1-word base). FP64 (~16 digits) can be
+  *wider* than the target-scaled QF quad-word for the small-x cases, so an FP64
+  baseline would misrepresent QF's lift — the honest lift is over the 1-word base
+  scalar. `K1_stable = 1/(√(x²+1)+x)` is the GATED DUT (algebraically
+  cancellation-free); `K1_naive_report` is REPORTED, not gated.
+- **K1 magnitude set {1e2, 1e4, 1e6} — pilot-calibrated (per the T3.6 prompt).**
+  The prompt flagged that if K1_naive showed uniform ~29-digit reads at this set (no
+  gradient), it should extend upward to {1e2, 1e6, 1e10}. A pilot confirmed the
+  cancellation gradient IS present at {1e2, 1e4, 1e6}: naive-QF reads
+  {28.23, 23.50, 23.87} (NOT uniform 29), so no extension is needed. The "+1"
+  collapse that drives the FP32 baseline to 0 is a FP32-**high-word** arithmetic
+  property (plain FP32 loses the "+1" in `x²+1` once `x² > 2²⁴`, x ≳ 4100), not a
+  composed-quad-word property — matching T2.6's set exactly.
+- **Per-kernel results (mean_digits / tolerance 26.0).** `K1_stable` 29.00 (harness
+  cap; uncapped would exceed), `K2_basel` 27.67, `K3_machin` 28.73, `K4_alt_harmonic`
+  28.64 — all PASS. `K1_naive_report` QF {28.23, 23.50, 23.87} vs FP32
+  {3.28, 0.00, 0.00} at x ∈ {1e2, 1e4, 1e6}. K2 sanity vs π²/6 6.22 digits
+  (truncation floor 6); K4 sanity vs ln 2 6.14 digits (truncation floor 6).
+  **4 PASS / 0 RED.**
+- **K3 margin note (contrast with T1.6).** `K3_machin` clears the 26.0 gate by
+  **+2.73 digits** — MUCH more headroom than T1.6's DD K3 (+0.09), because QF's atan
+  path has no PORT_NOTES_QF §10 denormal-tail hazard on Machin's small arguments
+  (1/5, 1/239 are well inside FP32 normal range at every word). Fully deterministic
+  (no RNG, fixed constants), so reproducible run-to-run. No revisit flag needed at
+  this margin.
+- **Contraction posture.** Registered with the plain `kokkos_ep_add_test` helper
+  (mirroring `dd_e2e_test` / `ff_cancellation_test`), NOT the EFT helper. K1's naive
+  `√(x²+1)−x` has a mul-then-sub adjacency an FMA *could* contract, but K1_naive is
+  reported-not-gated (a contraction-induced shift can't flip pass/fail), and the
+  gated path `K1_stable = 1/(√(x²+1)+x)` has no subtractive-cancellation adjacency.
+  The Dekker-`twoProduct` hazard the EFT helper guards is on no gated path here — it
+  is covered by `qf_fma_guard_test` (T3.5). Documented in the CMake comment.
+- **Rule 4 respected.** `qf_math.hpp` / `qf_complex.hpp` / any other `*_math.hpp`
+  untouched (only `#include`d). **No PORT_NOTES_QF changes** — T3.6 surfaced no
+  library defects or new algorithmic characterizations. `main` untouched;
+  `qffunKokkos` not merged.
+- **Scope-out.** Real QF ops only — no `qf_complex.hpp` (matches T1.6/T2.6 real-only
+  discipline); no per-op differential accuracy (that is the T3.4 sibling). No new
+  B-task stubs — 0 misses, nothing to log (clean GREEN, like T3.4/T3.5).
+- **Acceptance gate — all pass.** `cmake --build` clean, zero warnings from
+  `qf_cancellation_test.cpp`; `qf_cancellation_test` **PASS 4.87 s**; **20/20
+  non-accuracy tests green** (the 3 excluded `*_accuracy` tests are the known set,
+  unaffected by this task).
+- Depends on T0.1, T0.2, T3.0a, T3.0b, T3.1.
+- **Phase 3 validation COMPLETE: 6 of 6 tasks DONE** (T3.1 EFT, T3.2 non-overlap,
+  T3.3 property, T3.4 accuracy, T3.5 FMA-guard, T3.6 e2e cancellation). Next:
+  `qffunKokkos` → `main` merge task (separate, on Reet's ask).
 
 ## Rules for cluster-Claude implementation
 
