@@ -208,6 +208,26 @@ KOKKOS_INLINE_FUNCTION FloatFloat multiply(FloatFloat a, FloatFloat b) {
 
 KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
     const float split = 8193.0f;
+    // B8: the Dekker splitter below computes conb = b.hi * split (line ~"conb =")
+    // to extract b.hi's high half. For |b.hi| > FLT_MAX / (split + 1) ≈ 4.15e34
+    // that product overflows to ±inf, then b1 = conb - (conb - b.hi) = inf - inf
+    // = NaN, which poisons the whole quotient. This bites log()'s Newton
+    // iteration (divisor exp(b) ≈ a) for x ≳ e^79.7 ≈ 1.5e34, feeding NaN back
+    // into exp() and hanging its Taylor loop at the 60-iteration cap (surfaced by
+    // the B4 investigation — see TEST_SUITE_PLAN.md §B4/§B8).
+    //
+    // Fix: when b.hi is in the overflow-hazard band, pre-scale the divisor down
+    // by an exact power of two (2^-64: no FP rounding, so b's full FF precision is
+    // preserved), run the unchanged Dekker split, then unscale the quotient. Since
+    // q = a / (b·s) = (a/b) / s, the true quotient a/b is recovered by MULTIPLYING
+    // q by the same down-scale factor s. 2^-64 gives ample headroom: the largest
+    // |b.hi| ≈ FLT_MAX = 2^128 maps to 2^64, and 2^64 * split ≈ 2^77 ≪ FLT_MAX.
+    // Mirrors PORT_NOTES §4a's power-of-2 scaling pattern for exp's final scaling
+    // (same bug class, different site — the splitter, not exp's scaling).
+    const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
+    const float s = (Kokkos::fabs(b.hi) > kSplitOverflowThresh)
+                        ? ldexpf(1.0f, -64) : 1.0f;
+    b = FloatFloat(b.hi * s, b.lo * s);
     float s1   = a.hi / b.hi;
     float cona = s1 * split, conb = b.hi * split;
     float a1   = cona - (cona - s1), b1 = conb - (conb - b.hi);
@@ -226,7 +246,9 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
     float s2   = (t11 + t21) / b.hi;
     float hi   = s1 + s2;
     float lo   = s2 - (hi - s1);
-    return FloatFloat(hi, lo);
+    // B8: unscale — recover a/b from a/(b·s) by multiplying by s (exact power of 2
+    // when the pre-scale fired; s == 1.0f is a no-op on the non-overflow path).
+    return FloatFloat(hi * s, lo * s);
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat multiply_scalar(FloatFloat a, float b) {

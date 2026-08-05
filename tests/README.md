@@ -572,12 +572,15 @@ land in the FP32 denormal tail (`< 2⁻¹⁰⁰`) is counted **skipped**, not fa
 exp round-trips narrow their domains to respect `ff_math.hpp`'s exp guard
 (`a.hi ≥ 88.0f` returns 0): B2 `exp(log(a))` on `[1e-30,1e30]`, B11 `pow(a,2)` on
 `[1e-15,1e15]` (`2·ln(1e15) ≈ 69 < 88`). B3 `log(exp(a))` and B9 `exp(a)·exp(-a)`
-are further narrowed to `[-69,69]` (from `[-85,85]`) per pending follow-up bug
-task **B4**: exp's Taylor convergence `eps=1e-15f` is finer than FloatFloat's
-`~3.55e-15` resolution, so for ~3 % of generic large-magnitude arguments exp
-stalls to its iteration cap, prints `FFEXP: iteration limit`, and returns 0
-(surfaced via `log()`'s internal Newton exp; results stay accurate but stdout is
-spammed). Restore to `[-85,85]` once B4 lands. B8 double-angle narrows to `|a| < 3` because it
+run on `[-79,79]`, RESTORED from a temporary `[-69,69]` narrowing once bug task
+**B8** landed. History: T2.3 saw exp round-trips stall to their iteration cap
+(`FFEXP: iteration limit`, return 0) on `~[70,85]` arguments and hypothesized
+exp's Taylor `eps=1e-15f` (finer than FloatFloat's `~3.55e-15`) as the cause,
+deferring to bug task **B4**. B4's investigation falsified the eps theory: the
+real defect was a Dekker splitter overflow in `divide()` (`b.hi*split → inf`,
+`inf − inf = NaN`) that poisoned `log()`'s Newton exp for `x ≳ e^79.7`. **B8**
+fixed `divide()` with a scaled splitter, clearing the stall; `[-79,79]` sits one
+integer under the `~79.7` empirical clean ceiling (not pushed to `[-85,85]`). B8 double-angle narrows to `|a| < 3` because it
 compares two *different* reduced arguments and FF's double-float argument
 reduction degrades for large `|a|` (PORT_NOTES §5). B0 is the demoted multiply
 commutativity.
