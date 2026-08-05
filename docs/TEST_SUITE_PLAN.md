@@ -2461,6 +2461,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - **Phase 3 validation COMPLETE: 6 of 6 tasks DONE** (T3.1 EFT, T3.2 non-overlap,
   T3.3 property, T3.4 accuracy, T3.5 FMA-guard, T3.6 e2e cancellation). Next:
   `qffunKokkos` → `main` merge task (separate, on Reet's ask).
+- See `64aac2d` for the code diff and this DONE block for the outcome.
 
 ## Rules for cluster-Claude implementation
 
