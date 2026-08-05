@@ -859,27 +859,42 @@ screenful each.
   other op regresses.
 - **Scope-out.** erf large-|z| branch only; coordinate with B2.
 
-**B4: FF `exp` — `eps` finer than FloatFloat resolution.**
+**B4: FF `exp` — original scope INVALIDATED by empirical investigation. Superseded by B8.**
 
-- **Read first:** `ff_math.hpp` exp body (locate the Taylor-series eps
-  constant); T2.3 DONE block's B3/B9 domain-narrowing note; PORT_NOTES
-  (may already document the DD→FF eps porting concern).
-- **Root cause.** FF `exp` uses `eps = 1e-15f` as the Taylor-series
-  convergence threshold; FloatFloat's precision is ~2^-48 ≈ 3.55e-15.
-  For large |x|, terms never fall below `eps` (because eps < FF ulp
-  in that magnitude regime), so the Taylor loop stalls, hits the
-  iteration limit, prints `FFEXP: iteration limit` on stdout, and
-  returns 0.0. Direct DD→FF port artifact — DD's eps was appropriate
-  for FP64 resolution, was not rescaled for FP32.
-- **Fix.** Promote `eps` to a FloatFloat-appropriate constant
-  (~2^-48 = 3.55e-15 or larger with the appropriate safety margin);
-  cite the eps derivation in comment. Verify convergence at
-  ±85 without iteration-limit stall.
-- **Acceptance gate.** T2.3's `ff_property_test` B3/B9 domain restored
-  to `[-85, 85]`; `ctest` green including the restored range; zero
-  FFEXP iteration-limit prints during the B3/B9 pass.
-- **Scope-out.** exp eps only (not sin/cos/asin/etc. — if those have
-  the same porting artifact, log as B5/B6/etc.).
+- **Status: closed without code fix.** The stub's originally-hypothesized root
+  cause (Taylor-eps constant `1.0e-15f` finer than FF's ~3.55e-15 resolution,
+  causing terms to never fall below the convergence threshold) was empirically
+  falsified during B4's execution attempt (2026-08-05).
+- **Investigation summary (from cluster-Claude's B4 attempt, uncommitted).**
+  Instrumented `ff_math.hpp:349` exp Taylor loop with per-stall categorization
+  across three eps values (`1.0e-15f` original, `3.55e-15f` = u_FF, `5.0e-15f`
+  margin). Ran T2.3's B3/B9 identity tests over `[-85, 85]` under each. Result:
+  **31,085 FFEXP iteration-limit stalls at every eps value** (identical count),
+  with **0% Taylor-plateau stalls and 100% NaN-input stalls**. Changing eps had
+  zero observable effect on stall count or on `ff_accuracy_test` exp mean (13.2962
+  digits both). The eps constant is cosmetically imperfect but functionally a no-op.
+- **Real root cause (surfaced by B4's investigation).** `divide()` at
+  `ff_math.hpp:209` uses the FP32 Dekker splitter (`split = 8193.0f`). For divisor
+  `b` with `|b.hi| > FLT_MAX / 8193 ≈ 4.15e34`, the internal `b.hi * split`
+  overflows to `±∞`, and the subsequent `(b.hi * split) - b.hi = ∞ − ∞ = NaN`.
+  Inside `log()`'s Newton iteration, the divisor is `exp(b) ≈ a`, which exceeds the
+  splitter overflow threshold for `x ≳ 79.7`. The NaN then propagates back into
+  `exp()` on the next Newton step; NaN comparisons in the Taylor convergence check
+  always evaluate false, so the loop never breaks and stalls at the 60-iteration
+  cap. **Same bug class as PORT_NOTES §4a** (exp large-input NaN from splitter
+  overflow), living in a different site (divide's splitter, not exp's final scaling).
+- **Empirical clean ceiling for FF exp inputs (from a probe sweep during B4's
+  investigation): x ≈ ±79.7.** Measured: `[-79.7, 79.7]` → 0 NaN; `[-80, 80]` →
+  891; `[-85, 85]` → 15,491. FP32's own exp overflow threshold (~±88 =
+  FLT_MAX_EXP·ln2) is NOT the binding constraint — the FF divide splitter overflow
+  bites first.
+- **Superseded by B8** (FF `divide` splitter overflow), which fixes the real defect
+  and enables the honest B3/B9 domain restoration. No changes to `ff_math.hpp` under
+  the B4 label; the eps swap is not shipped (functionally a no-op, defensible as
+  hygiene but not honest as a bug fix).
+- **T2.3 B3/B9 domain narrowing stays as-is** (`[-69, 69]`) until B8 lands, at which
+  point B3/B9 restore to `[-79, 79]` (the true clean ceiling, safety-margined one
+  integer under `79.7`).
 
 **B5: FF `erf` — asymptotic branch broken + FP32 Taylor overflow.**
 
