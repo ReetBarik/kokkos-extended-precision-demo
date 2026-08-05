@@ -2362,6 +2362,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - Depends on T0.1, T0.2, T3.0a, T3.0b, T3.1.
 - **Phase 3 validation: 5 of 6 tasks DONE** (T3.1, T3.2, T3.3, T3.4, T3.5). T3.6
   remains (e2e cancellation kernels).
+- See `c71690b` for the code diff and this DONE block for the outcome.
 
 **T3.6: End-to-end cancellation kernels for QF.**
 
