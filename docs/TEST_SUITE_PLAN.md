@@ -2170,7 +2170,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   T2.4 template); QF's is `2⁻⁹⁶`.
 
 - Executed 2026-08-05. Task commit `faf35d5` on `qffunKokkos`; DONE block +
-  docs-pointer `<pending>`. Fourth Phase-3 *validation* task — the T2.4/T1.4
+  docs-pointer `7792dc0`. Fourth Phase-3 *validation* task — the T2.4/T1.4
   analogue for the QF backend (**4/6 Phase-3 validation tasks done**: T3.1 EFT,
   T3.2 non-overlap, T3.3 property, T3.4 accuracy).
 - **What shipped (3 files, +~1040 LOC).** `tests/qf_accuracy_test.cpp` (new, ~900):
