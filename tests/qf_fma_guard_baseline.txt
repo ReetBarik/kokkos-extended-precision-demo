@@ -1,0 +1,31 @@
+# qf_fma_guard_test contraction-ON baseline (T3.5)
+#
+# The FIRST non-comment line below is the recorded value of F = ERR_ZERO +
+# ERR_NONZERO_WRONG, summed over qf_two_prod + qf_two_sqr, host + device, observed
+# by qf_fma_guard_test_contract_on (the -ffp-contract=fast / --fmad=true build).
+# It is historical data, not a pass/fail gate: the ON variant fails ONLY on
+# ERR_NONZERO_WRONG (a genuinely-broken error term), never on ERR_ZERO (which is
+# informative — it means the compiler contracted). On each run the ON variant
+# compares its live F against this number and prints "baseline: OK" if unchanged
+# or "*** DRIFT ***" if it differs.
+#
+# Drift means the compiler's contraction behavior changed since this was recorded
+# (a compiler upgrade, a new -march/ISA target that gained FMA, or a flag change).
+# That is a WARNING to investigate, not a failure. If the new value is correct for
+# the new toolchain, update the number below.
+#
+# This is the QF analogue of tests/ff_fma_guard_baseline.txt (T2.5) and
+# tests/dd_fma_guard_baseline.txt (T1.5). Like the FF guard, the QF guard's oracle
+# is exact FP64 (48 <= 53 bits), not __float128, so it needs no LIBQUADMATH and
+# both variants run unconditionally. Unlike either, the QF guard calls the SHIPPED
+# qf_math.hpp primitives (qf_two_prod / qf_two_sqr) directly, so this number
+# characterizes GCC's contraction of the shipped source itself.
+#
+# Recorded environment:
+#   compiler : GCC 13.3.0 (x86_64-suse-linux), -O3 -ffp-contract=fast
+#   ISA      : baseline x86-64 (no -mfma / -march=native), so no FMA emitted
+#   Kokkos   : 5.1.0, Serial backend
+#   result   : 0 — GCC did NOT contract `a1*b1 - p` (qf_two_prod) or `hi*hi - q`
+#              (qf_two_sqr) on this ISA target (same outcome as the FF and DD
+#              guards; on this toolchain -ffp-contract=off is belt+suspenders).
+0

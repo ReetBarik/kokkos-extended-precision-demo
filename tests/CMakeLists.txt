@@ -242,3 +242,16 @@ kokkos_ep_add_test(qf_property_test)
 # EXPECTED-MIN-DROP. Plain helper — NOT an EFT test, so no contraction flags
 # (mirrors dd_accuracy_test / ff_accuracy_test registration).
 kokkos_ep_add_test(qf_accuracy_test)
+
+# T3.5 FMA-contraction guard for QF: QF analogue of T2.5's ff_fma_guard_test, same
+# source/two-postures dual-registration pattern (see qf_fma_guard_test.cpp). Reuses
+# the SAME helpers as the DD/FF guards — the only per-variant knobs are the compile
+# definitions the helpers set; the ON helper derives qf_fma_guard_baseline.txt from
+# the target name. Unlike FF (which mirrors ff_math.hpp's embedded Dekker), this test
+# calls the SHIPPED qf_math.hpp primitives (qf_two_prod / qf_two_sqr) directly, so it
+# characterizes GCC's contraction of the shipped source itself (cf. T3.1 qf_eft_test,
+# which established the same direct-call posture under contraction-OFF). Also guards
+# qf_two_sqr (a second Dekker sequence, no FF analogue). FP64 oracle (exact, no
+# LIBQUADMATH), so both variants run unconditionally (no quadmath gate / SKIP-77).
+kokkos_ep_add_eft_test(qf_fma_guard_test)              # -> qf_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(qf_fma_guard_test)  # -> qf_fma_guard_test_contract_on  (ON, reports)

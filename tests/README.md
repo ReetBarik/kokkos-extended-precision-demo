@@ -47,6 +47,8 @@ the Layer-1 EFT unit test (see [EFT tests](#eft-tests-layer-1) below).
 | `qf_nonoverlap_test` | T3.2      | Priest **length-4** non-overlap invariant `\|f_{i+1}\| ≤ ½ ulp(f_i)` (i=0,1,2, mathematical ½-ulp form via `frexp`) on the **output** of every QF op returning a `QuadFloat` (arithmetic incl. `ieee_add`/`sloppy_add`/`divide_accurate`, `sqr`/`sqrt`, all transcendentals, joint `sincos`/`sinhcosh` components, `angle`, `multiply_scalar`, `mul_pwr2` **(±2ᵏ only)**, `fma`, `pow_int`, round family, utilities); oracle-independent (runs without LIBQUADMATH), `__float128` only **enriches inputs** to ~96-bit ordered width behind the quadmath gate. QF analogue of `ff_invariant_test`; trig domain has **no tiny-arg lower bound** (QF `sincos` has no FFCSSNR stall). Two-tier classifier (`NOVL_OK`/`NOVL_WEAK`/`NOVL_FAIL`); **ships RED under the default strict Priest gate** because QD `renorm` gives only Shewchuk-weak `≤ ulp` non-overlap — flip `kStrictPriestGate` for the weak gate (see §QF non-overlap). Plain helper (no contraction posture) |
 | `qf_property_test` | T3.3         | QF analogue of `ff_property_test`: **Group A** 12 bit-exact identities (no oracle — additive inverse/zero, `a·0`/`a·1`/`a·(-1)`, double negation, `abs` sign branches/`abs(-a)`, **add commutativity bit-exact on WIDE 4-word operands** — a QF strengthening over FF/DD's single-word restriction — and the `mul_pwr2` ±2ᵏ round-trip), **Group B** 15 tolerance identities vs `__float128` (**mean-gated** at an absolute **ulp of U=2⁻⁹⁶** floor — 10 ulp = 27.90 digits default, 30 ulp = 27.42 for the exp-denormal-tail-limited `exp(log)`/`pow(x,2)` per PORT_NOTES_QF §10 — **NOT** the DD/FF `−log10(N·u²)` statistical floor, since QF is a quad-word whose resolution IS U), **Test C** named-constant regressions (target ≥27 of QF's 29 digits). Includes the T2.3 **B4 exp-eps** pattern (`exp(a+eps)≈exp(a)(1+eps)`) — which does **NOT** recur in QF (`qf_math.hpp` exp uses `eps=1e-28f` coarser than U). Group A unconditional; Group B / Test C runtime-SKIP without LIBQUADMATH. Plain helper (no contraction posture) |
 | `qf_accuracy_test` | T3.4         | QF analogue of `ff_accuracy_test` (T2.4) / `dd_accuracy_test` (T1.4): per-op digits of accuracy vs `__float128` for **every** QF op returning a `QuadFloat` with a quadmath counterpart (49 scored + 5 skipped = T3.2's 54). Three passes per op — **narrow** (Route-A over the §11 demo domains) + **broad** (`make_wide_input` ~96-bit ordered) + **corpus** (named §3/§4 accessor where one exists) — combined into one (min, mean, n). **Fail-gates on the MEAN** against the QF quad-word **absolute ulp-of-U** floor (10 ulp = **27.90** default; 30 ulp = **27.42** for the exp-family output-denormal tail, PORT_NOTES_QF §10) — **NOT** the DD/FF `−log10(N·u²)` statistical floor (QF is a quad-word whose resolution IS U=2⁻⁹⁶); low mins for the shared PORT_NOTES §5 registry ops → **EXPECTED-MIN-DROP**. Oracle evaluated at the **exact widened input** `qf_to_q(input)` (QF's ~29 digits are finer than a double, so the broad regime's sub-double bits matter — a QF-specific twist over DD/FF's `(float128)x` oracle). exp/exp2/exp10 domains narrowed to keep the quad-word result in FP32 normal range (§10). Runtime-SKIPs without LIBQUADMATH. Plain helper (no contraction flags) |
+| `qf_fma_guard_test` | T3.5 | QF analogue of `ff_fma_guard_test`, **contraction OFF** — the **shipped** Dekker EFTs `qf_two_prod` **and** `qf_two_sqr` (splitter `8193.0f` = 2¹³+1) built `-ffp-contract=off`; **fail-gates** on any collapsed/wrong error term (a stronger form of T3.1). Calls the shipped `qf_math.hpp` primitives **directly** (no mirror-and-comment, cf. `qf_eft_test`). **FP64 oracle** (exact — 48-bit product fits FP64's 53-bit mantissa), so runs **unconditionally** (no LIBQUADMATH gate, no SKIP-77). `qf_two_sum` included as a contraction-immune **control** |
+| `qf_fma_guard_test_contract_on` | T3.5 | QF analogue, **contraction ON** — the *same source* built `-ffp-contract=fast`; **reports** per-op three-way `{ERR_ZERO / ERR_NONZERO_CORRECT / ERR_NONZERO_WRONG}` counts and warns on drift vs `qf_fma_guard_baseline.txt`. **PASS iff `ERR_NONZERO_WRONG == 0`** (any `ERR_ZERO`/`CORRECT` mix is acceptable — collapse under contraction is *informative*, not a fault of `qf_math.hpp`) |
 
 ## How to run
 
@@ -905,6 +907,76 @@ a **reporter** (exits 0), not a `WILL_FAIL` test — matching
 sensitivity, not by contraction on this compiler; T1.5 verified a deliberately-
 broken `twoProduct` flags ~95 % of checks). **Scope:** the Dekker `twoProduct`
 only; no complex, no other ops; `ff_math.hpp` NOT modified.
+
+### QF FMA-contraction guard (Layer 5, Phase 3)
+
+`qf_fma_guard_test.cpp` (**T3.5**) is the QF analogue of `ff_fma_guard_test.cpp`,
+mirroring its structure verbatim: one source compiled into two targets under
+opposite contraction postures, a contraction-immune FP64 oracle, a `qf_two_sum`
+**control** (no mul-then-± adjacency → must stay exact both ways), host + device
+passes, OFF gates / ON reports with a committed baseline. It reuses the **same**
+CMake helpers as the DD/FF guards:
+
+```cmake
+kokkos_ep_add_eft_test(qf_fma_guard_test)              # -> qf_fma_guard_test              (OFF, gates)
+kokkos_ep_add_eft_test_contract_on(qf_fma_guard_test)  # -> qf_fma_guard_test_contract_on  (ON, reports)
+```
+
+The `_contract_on` helper derives the per-test baseline path
+(`qf_fma_guard_baseline.txt`) from the target name, so the DD, FF, and QF guards
+share one helper with no duplication.
+
+**Two deliberate divergences from the FF shape (both reported in the T3.5 DONE block):**
+
+- **No mirror-and-comment — calls the shipped primitives directly.** `ff_math.hpp`
+  embeds its Dekker `twoProduct` inside `multiply()`, so T2.5 had to *duplicate* it
+  into the test file. `qf_math.hpp` **exposes** `qf_two_prod` / `qf_two_sqr` /
+  `qf_two_sum` as free functions, so T3.5 compiles the **shipped source** under the
+  ON flags — strictly stronger for a contraction guard: it characterizes whether
+  GCC contracts *`qf_math.hpp`'s own code*, not a copy that could drift. Same
+  divergence `qf_eft_test` (T3.1) took from `ff_eft_test`.
+- **`qf_two_sqr` is also guarded.** T2.5 was `twoProduct`-only (FF exposes no
+  squaring EFT). QF ships `qf_two_sqr`, a **second** Dekker sequence with a
+  `hi*hi - q` contraction hazard, so T3.5 guards both — matching T3.1's op surface.
+
+**Three-way classification (the ON reporter's refinement over T2.5's binary `F`).**
+T2.5 counted one number `F` = "error-term mismatches" and exited 0 regardless. QF
+refines this into three mutually-exclusive buckets per in-domain input (with
+`e_ref` = the unique exact residual `float(exact − hi)` and `id_ok` = the Dekker
+identity `(double)hi + (double)lo == exact`):
+
+- `e_ref == 0` → **TRIVIAL** (true error legitimately zero, e.g. an exact product;
+  uninformative about contraction — reported separately, not gated).
+- `e_ref ≠ 0` and `id_ok` → **`ERR_NONZERO_CORRECT`** (compiler did not contract,
+  or contracted harmlessly — Veltkamp splitting keeps each partial product exactly
+  representable, so a fused `partial ± accumulator` introduces no rounding
+  difference; see T1.5's `-mfma` analysis).
+- `e_ref ≠ 0`, `!id_ok`, `lo == 0` → **`ERR_ZERO`** (error term **collapsed** — the
+  classic contraction signature).
+- `e_ref ≠ 0`, `!id_ok`, `lo ≠ 0` → **`ERR_NONZERO_WRONG`** (nonzero error term that
+  violates the identity — the *only* genuinely-broken outcome; a real
+  miscompilation/bug, expected to never fire).
+
+**OFF gate:** `ERR_ZERO == 0 && ERR_NONZERO_WRONG == 0` (`F := their sum`), plus the
+`qf_two_sum` control exact and no named-case failure. **ON PASS:**
+`ERR_NONZERO_WRONG == 0` — this is T2.5's ratified reporter policy, refined to the
+three-way scheme (T2.5 could not tell "contracted-to-zero" from "contracted-to-
+wrong", so it exited 0 on both; the `ERR_NONZERO_WRONG` bucket lets T3.5 fail *only*
+on the genuinely-broken case). The ground truth is plain **FP64** (exact — 48 ≤ 53
+bits), so both variants run **unconditionally** (no `KOKKOS_EP_HAVE_QUADMATH` gate,
+no SKIP-77), like the FF guard.
+
+**Observed on this toolchain (GCC 13.3.0, baseline x86-64, no `-mfma`):** over
+**511,988** `qf_two_prod` checks + **399,286** `qf_two_sqr` checks (host + device,
+each ≈256 K / 200 K per side) under **both** postures, `ERR_ZERO = 0`,
+`ERR_NONZERO_WRONG = 0`, `ERR_NONZERO_CORRECT` = everything informative — **`F = 0`**,
+the *same* outcome T1.5/T2.5 recorded. GCC does **not** contract `a1*b1 − p`
+(`qf_two_prod`) or `hi*hi − q` (`qf_two_sqr`) on this ISA; `-ffp-contract=off` is
+belt+suspenders here, and the ON reporter's baseline (`0`) arms drift detection for a
+future toolchain where that stops being true. **Scope:** the two shipped Dekker
+sequences only; no complex, no other ops; `qf_math.hpp` NOT modified. FMA-contraction
+posture is a compiler characterization, not input conditioning, so it is **not** a
+PORT_NOTES_QF §5 entry.
 
 ## End-to-end cancellation kernels (Layer 6)
 
