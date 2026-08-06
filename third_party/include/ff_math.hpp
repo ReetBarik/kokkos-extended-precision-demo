@@ -714,44 +714,72 @@ KOKKOS_INLINE_FUNCTION FloatFloat round(FloatFloat a) {
 // ============================================================
 
 KOKKOS_INLINE_FUNCTION FloatFloat erf(FloatFloat z) {
-    const float eps = 1.0e-15f;
+    // B5 (FF): repair both erf branches for FP32's narrow exponent range. The DD
+    // port (dd_math.hpp:670) computes each Taylor/asymptotic term from a separately
+    // accumulated numerator (t2) and denominator (t3). At FP64 those intermediates
+    // stay finite; at FP32 (max ~3.4e38) they overflow long before the loop's fixed
+    // 60-iteration cap, so erf returned NaN across the whole smooth range ~[1.9, 6]
+    // (probe: [2,6) was 100% NaN). Two independent failures were compounding:
+    //   (a) Taylor branch: t2 = 2^k*z^{2k+1} and t3 = (2k+1)!! each overflow FP32
+    //       around k~26-31 for |z| in [2,4); the loop never converged first.
+    //   (b) Asymptotic branch: the erfc asymptotic series is *divergent*, so the
+    //       relative-eps test never fired; the loop ran to k=60 where (2k-1)!!
+    //       overflows FP32 -> inf/inf = NaN. (This is the FF sibling of DD's B3.)
+    // Fix: (1) accumulate each term from the previous via its running ratio, which
+    // keeps every intermediate O(term) and thus finite; (2) truncate the divergent
+    // asymptotic series at its smallest term (standard optimal truncation); and
+    // (3) lower the Taylor->asymptotic switchover to 3.5 (see kTaylorMax below) so
+    // each branch is used only where it is both convergent and overflow-safe.
+    // Series identities: A&S 7.1.6 (Taylor) and A&S 7.1.23 (asymptotic erfc).
+    const float eps = 1.0e-14f; // ~ FF relative resolution (2^-46); finer never fires
     if (z.hi == 0.0f) return FloatFloat(0.0f);
-    const float large = 6.0f; // erfc(6) ~= 2e-17 << FF resolution
+    const float large = 6.0f; // erfc(6) ~= 2e-17 << FF resolution -> erf saturates
     if (z.hi >  large) return FloatFloat( 1.0f);
     if (z.hi < -large) return FloatFloat(-1.0f);
 
     FloatFloat z2 = multiply(z, z);
     int sign = (z.hi >= 0.0f) ? 1 : -1;
     FloatFloat az = abs(z);
+    FloatFloat two_z2 = multiply_scalar(z2, 2.0f);
 
-    if (Kokkos::fabs(z.hi) < 4.0f) {
-        FloatFloat t1 = FloatFloat(0.0f), t2 = az, t3 = FloatFloat(1.0f);
-        for (int k = 0; k <= 60; ++k) {
-            if (k > 0) {
-                t2 = multiply_scalar(multiply(z2, t2), 2.0f);
-                t3 = multiply_scalar(t3, 2.0f*k + 1.0f);
-            }
-            FloatFloat t4 = divide(t2, t3);
-            FloatFloat t1new = add(t1, t4);
-            if (Kokkos::fabs(t4.hi) < eps * Kokkos::fabs(t1new.hi)) { t1 = t1new; break; }
-            t1 = t1new;
+    // Switchover derivation (probe over |z| in [1,6], incremental recurrence):
+    // Taylor stays >= FF precision and converges within the iteration cap up to
+    // |z| ~ 4; the asymptotic erf (erf = 1 - tiny erfc) clears the 8.45-digit gate
+    // for |z| >~ 3. 3.5 sits inside both windows with margin.
+    const float kTaylorMax = 3.5f;
+
+    if (Kokkos::fabs(z.hi) < kTaylorMax) {
+        // Taylor (A&S 7.1.6): erf(z) = (2/sqrt(pi)) e^{-z^2} sum_k term_k,
+        //   term_0 = |z|,  term_k = term_{k-1} * (2 z^2) / (2k+1).
+        // All terms positive; the running ratio keeps each O(<= sum) so no FP32
+        // overflow (sum <= (sqrt(pi)/2) e^{z^2}, ~3.8e15 at |z|=6).
+        FloatFloat term = az, sum = az;
+        for (int k = 1; k <= 100; ++k) {
+            term = divide_scalar(multiply(term, two_z2), 2.0f*k + 1.0f);
+            FloatFloat sumnew = add(sum, term);
+            if (Kokkos::fabs(term.hi) <= eps * Kokkos::fabs(sumnew.hi)) { sum = sumnew; break; }
+            sum = sumnew;
         }
-        FloatFloat result = multiply_scalar(divide(multiply_scalar(t1, 2.0f),
-                                multiply(sqrt(FloatFloat_pi()), exp(z2))), 1.0f);
+        FloatFloat result = divide(multiply_scalar(sum, 2.0f),
+                                   multiply(sqrt(FloatFloat_pi()), exp(z2)));
         return (sign > 0) ? result : negate(result);
     } else {
-        FloatFloat t1 = FloatFloat(0.0f), t2 = FloatFloat(1.0f), t3 = az;
-        for (int k = 0; k <= 60; ++k) {
-            if (k > 0) {
-                t2 = multiply_scalar(t2, -(2.0f*k - 1.0f));
-                t3 = multiply(t3, multiply_scalar(z2, 2.0f));
-            }
-            FloatFloat t4 = divide(t2, t3);
-            FloatFloat t1new = add(t1, t4);
-            if (Kokkos::fabs(divide(t4, t1new).hi) < eps) { t1 = t1new; break; }
-            t1 = t1new;
+        // Asymptotic (A&S 7.1.23): erfc(z) = e^{-z^2}/sqrt(pi) * sum_k term_k,
+        //   term_0 = 1/|z|,  term_k = term_{k-1} * (-(2k-1)) / (2 z^2).
+        // This series is divergent; sum only through the smallest term (optimal
+        // truncation) — adding beyond it both loses accuracy and, at FP32, would
+        // eventually overflow. Then erf = 1 - erfc.
+        FloatFloat term = divide(FloatFloat(1.0f), az), sum = term;
+        float prev_mag = Kokkos::fabs(term.hi);
+        for (int k = 1; k <= 60; ++k) {
+            FloatFloat next = divide(multiply_scalar(term, -(2.0f*k - 1.0f)), two_z2);
+            float mag = Kokkos::fabs(next.hi);
+            if (mag > prev_mag) break;                 // smallest term reached -> stop
+            sum = add(sum, next);
+            term = next; prev_mag = mag;
+            if (mag <= eps * Kokkos::fabs(sum.hi)) break;
         }
-        FloatFloat erfc_val = divide(t1, multiply(sqrt(FloatFloat_pi()), exp(z2)));
+        FloatFloat erfc_val = divide(sum, multiply(sqrt(FloatFloat_pi()), exp(z2)));
         FloatFloat erf_val  = subtract(FloatFloat(1.0f), erfc_val);
         return (sign > 0) ? erf_val : negate(erf_val);
     }
