@@ -932,7 +932,7 @@ screenful each.
   other op regresses.
 - **Scope-out.** erfc path only; cross-reference B5.
 
-**B7: FF `tgamma` — Lanczos coefficients at FF precision.**
+**B7: FF `tgamma` — Lanczos coefficients at FF precision. (DONE)**
 
 - **Read first:** `ff_math.hpp:749` (Lanczos coefficients, `c1=676.5203681218851f`,
   …); B1 (DD sibling — same defect, DD-flavored); `tests/ff_accuracy_test.cpp`
@@ -950,6 +950,83 @@ screenful each.
 - **Acceptance gate.** `ff_accuracy_test` tgamma mean ≥ 8.45; full ctest green; no
   other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
+
+- Executed 2026-08-05. Task commit `926e056` on branch
+  `b7-ff-tgamma-lanczos-precision` (now merged to `main` via merge commit `08086c2`
+  and the branch deleted); DONE block + docs-pointer this bundle (T3.5/T3.6/B8-style
+  two-commit clean-GREEN close). **Second post-Phase-3 library-side bug FIX task**
+  (after B8): like B8, licensed by rule 4 to edit the ONE library file the stub
+  authorizes.
+- **What shipped (1 file, +22/−10 LOC).** `third_party/include/ff_math.hpp` only:
+  the `tgamma()` Lanczos-coefficient promotion plus the B7 comment block. **Rule 4
+  respected** — the ONE library file the B7 stub authorizes; no other `*_math.hpp` /
+  `*_complex.hpp` (and no `dd_math.hpp`, confirming the DD tgamma stays untouched).
+- **Fix technique — remove the erroneous `f` suffixes.** The 9 Lanczos g=7
+  coefficients (`c0..c8`) AND the `sqrt(2·π)` leading factor (10 constants total)
+  were `float` literals. Promoted to `double`, each `FloatFloat(cN)` call binds the
+  `FloatFloat(double)` constructor at `ff_math.hpp:94`, which performs the split
+  `hi = (float)d; lo = (float)(d − (double)hi)` — a full FF pair (~14 digits). Because
+  `double`'s 53-bit mantissa exceeds FF's 48 bits, the split is **FF-exact**
+  (per-coefficient FF representation error `< 2^-48`). The Lanczos g=7 structure is
+  unchanged; the reflection path uses `FloatFloat_pi()` (already a full two-word FF
+  constant, correctly left untouched). Coefficient source: Godfrey g=7 (P. Godfrey
+  2001; identical values to `dd_math.hpp`'s DD tgamma, Boost.Math, and Wikipedia
+  "Lanczos approximation").
+- **Design insight worth recording.** The B7 stub anticipated an explicit
+  `from_bits(hi, lo)` split with hardcoded bit patterns. Reality-first inspection
+  found the `FloatFloat(double)` constructor already performs that exact split, so the
+  fix reduces to removing `f` suffixes — mechanically cleaner, less to review, less
+  bit-rot risk. This is the pattern-recognition analogue of B8's "unscale by `s` not
+  `1/s`" catch: inspecting existing infrastructure beat the prompt's speculative recipe.
+- **Deviations from the B7 task prompt (all minor, all justified; precedent: B8's
+  prompt-error catch).** (1) **Coefficient count** — the task prompt cited FIVE
+  (`c1..c5`, following the stub's abbreviated "c1=…, …" notation); the actual Lanczos
+  g=7 body has NINE (`c0..c8`) plus the `sqrt(2·π)` leading factor. All 10 promoted
+  (prompt undercount, not scope drift). (2) **"Rewrite accumulator arithmetic to use
+  FF multiply/add"** was a no-op — the accumulator already used FF add/divide/multiply;
+  reality was verified and nothing was done there. (3) **`sqrt(2·π)` leading factor**
+  promoted alongside the coefficients: it multiplies the whole result, so as a single
+  `float` it would have capped the product at ~7 digits (a legitimate companion
+  Lanczos parameter, in-scope per the stub's guidance).
+- **Base-branch discrepancy (recorded honestly).** The B7 task prompt cited `main`
+  tip as `cee94ec` and said it "includes the B8 fix." At prompt-send time `main` was
+  actually at `61851e3` (pre-B8-merge) — the B8 branch merge had not yet been
+  performed. The fix was correctly branched from actual-main (`61851e3`), correctly
+  reasoned independent of B8 (tgamma coefficients vs `divide()` splitter; small
+  in-domain tgamma divisors never approach the splitter-overflow band), and the
+  discrepancy was flagged in the task commit. The subsequent merge into `main` (merge
+  commit `08086c2`) reconciles both fixes in the correct order. Third instance of the
+  "reality-first check" discipline paying off (precedents: T3.4 pow §10, B8
+  unscale-by-`s`).
+- **Acceptance-gate summary (all PASS).**
+  - **`ff_accuracy_test` tgamma: mean 6.10 → 12.84** (gate ≥ 8.45, clears by +4.39),
+    **min 5.94 → 11.42** (+5.48), n = 1,000,060 (unchanged). Binding gate MET.
+  - **No other op regressed.** Pre/post diff of all 50 `ff_accuracy_test` rows: ONLY
+    tgamma changed. The other 49 rows — including the deliberately-preserved erf 3.94 /
+    erfc 3.91 REDs (B5/B6, pending) and every EXPECTED-MIN-DROP row — are digit-for-digit
+    identical.
+  - **Full ctest: 21/23 pass, 1757 s.** The 2 failures are exactly the
+    deliberately-preserved REDs: `dd_accuracy_test` (DD erf 24.64 / erfc 19.50 / tgamma
+    14.56 — DD tgamma UNCHANGED, confirming `dd_math.hpp` untouched) and
+    `ff_accuracy_test` (B5/B6 FF erf/erfc; its tgamma row now PASSES).
+  - **All six demos** (`kokkos_ep_demo`, `_complex`, `_ff`, `_ff_complex`, `_qf`,
+    `_qf_complex`) build and run **RC 0**; tgamma is not in the demo op inventory, so
+    the demo gate is build+run only. **Zero new warnings** from `ff_math.hpp` under
+    `-O3 -Wall -Wextra`.
+- **Follow-ups deferred (not shipped, per scope-out).** (1) A companion PORT_NOTES
+  section documenting the DD→FF `f`-suffix port artifact — drafted separately for
+  Reet's ratification, NOT inline. The draft notes DD's B1 sibling is DIFFERENT: DD's
+  coefficients are already `double`, so DD has ~15-digit precision but needs true
+  DD-precision coefficients to reach ~30; FF only needed the `float`→`double`
+  promotion because `double` already exceeds FF's precision floor. (2) No probe of
+  other Lanczos-adjacent constants in `ff_math.hpp` (e.g. sinh/cosh/asin coefficient
+  literals) — per the B4/B8 precedent, hypothesized-but-unverified defects get their
+  own tasks with proper failure gates, not silent scope expansion.
+- **Post-B7 sequence.** Remaining FF library-fix stubs: **B5** (FF erf — asymptotic
+  branch broken + FP32 Taylor overflow; the DD-B3 sibling), then **B6** (FF erfc —
+  downstream of B5, direct computation for large `|z|`; the DD-B2 sibling). B5 is the
+  next executable task. B1/B2/B3 (DD-side erf/erfc/tgamma) remain independent and can
+  be worked in any order relative to the FF set.
 
 **B8: FF `divide` — Dekker splitter overflow at large divisors (surfaced by B4). (DONE)**
 
