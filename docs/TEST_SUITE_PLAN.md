@@ -810,25 +810,58 @@ task reported, did not patch). The corresponding test is the durable acceptance
 gate. Pick up in any order after Phase 2/3, not now; these are stubs, one
 screenful each.
 
-**B1: `tgamma` — Lanczos coefficients at DD precision.**
+**B1: `tgamma` — Lanczos coefficients at DD precision (higher-order Lanczos, g≈20.32 / N=24).**
 
+- **Scope revised (2026-08-06).** The stub as originally written scoped the fix to
+  "promote the nine g=7 coefficients to DD precision, keep the g=7 structure". That
+  is **mathematically incapable of clearing the 25.91 gate**: the g=7 / n=9 Lanczos
+  approximation has an intrinsic *truncation-order* ceiling independent of how the
+  coefficients are stored. Empirical: exact 25-digit coefficients via 9-node Cauchy
+  solve, mpmath at 80-digit precision, worst-case **13.03 digits** over
+  a∈[0.55,150] (mid-range peaks ~19.6, large-a floor ~13). So coefficient
+  promotion alone reaches at most ~13–19 digits. The original root cause
+  ("`double` coefficients cap the result at ~15 digits") was *incomplete* — it
+  correctly identified a real defect, but the storage precision and the
+  approximation order both cap near ~15, and only the latter is binding once the
+  former is fixed. This is the substantive difference from the FF sibling **B7**,
+  where the ~12.84-digit target sat *under* the g=7 ceiling and coefficient
+  promotion alone was sufficient. Scope is therefore *widened* (not invalidated):
+  same defect, same op, larger fix. Precedent for stub revision: B4 → B8.
 - **Read first:** `dd_math.hpp:723-751` (tgamma), how `DoubleDouble_pi()` etc.
   build DD constants via `from_bits(hi, lo)`; `tests/dd_accuracy_test.cpp` tgamma
-  row; this block.
+  row (random pass is `uniform(0.1, 50)` × 10⁶, so the **mean is dominated by
+  large a** — precisely where the g=7 ceiling is worst); B7 (FF sibling); this block.
 - **Root cause.** `tgamma` uses Lanczos g=7 with FP64 coefficient constants
-  (`dd_math.hpp:729-738`: `676.5203681218851`, …). Double-precision coefficients
-  cap the result at ~15 digits regardless of the enclosing DD arithmetic
-  (measured mean 14.56, min ~0 near poles).
-- **Fix options.** (a) Promote the Lanczos coefficients to DD-precision constants
-  — compute once to ~32 digits (mpmath / Boost) and hardcode as
-  `DoubleDouble::from_bits(hi, lo)` pairs, the way `DoubleDouble_pi()` is done;
-  keeps the already-validated Lanczos structure, smaller diff. (b) Switch
-  algorithms (Stirling asymptotic + reflection, matching QD's `qd_real.cc`).
-  **Preference: (a).**
+  (`dd_math.hpp:729-738`: `676.5203681218851`, …), measured mean 14.56, min ~0
+  near poles. Two compounding caps: (i) `double` coefficients truncate to ~15.65
+  digits; (ii) the g=7 / n=9 approximation order itself caps at ~13–19 digits.
+  Fixing (i) alone leaves (ii) binding.
+- **Fix options.** **(a) [selected] Higher-order Lanczos**, g≈20.32 / N=24, the
+  Boost `lanczos24m113` parameter shape (published, well-tested). Keeps the
+  already-validated series structure — `c_0 + Σ c_k/(x+k)` with the
+  `sqrt(2π)·t^(x+0.5)·e^−t` prefactor — and the same "promote coefficients to DD
+  via `from_bits(hi, lo)` split" mechanic as B7; only the order and coefficient
+  count change (24 instead of 9). (b) [rejected] g=7 with coefficient promotion
+  as originally scoped — capped at ~13 digits, cannot clear the gate. (c)
+  [rejected] Switch to Stirling asymptotic + reflection (QD's `qd_real.cc`) —
+  larger diff and a new algorithm to validate, unnecessary when the Lanczos
+  structure still reaches DD precision at higher order.
+- **Coefficient-form caveat (matters for choosing g).** Boost's published
+  lanczos24m113 coefficients are for the **rational** (ratio-of-polynomials)
+  evaluation form, which is *immune* to cancellation. This project's tgamma uses
+  the **partial-fraction** form, whose coefficients grow as max|c_k| ~ 10^(g/2)
+  while the sum stays O(1) — so raising g trades truncation error for
+  **cancellation** error, and the two cross. The coefficients must therefore be
+  re-derived for the partial-fraction form at the chosen g (not transcribed from
+  Boost), and g itself is a tuning parameter with an interior optimum. The
+  implementing task should sweep (g, N) under simulated DD arithmetic and pick the
+  optimum, reporting the measured mean for the chosen point.
 - **Background / deliverables.** New DD coefficient constants + tgamma rework in
-  `dd_math.hpp` (its own task/branch). Cite the coefficient source in comments.
-- **Acceptance gate.** `dd_accuracy_test` tgamma mean ≥ 25.91; full ctest green;
-  no other op regresses.
+  `dd_math.hpp` (its own task/branch), plus a committed generator script so the
+  2·N magic numbers are reproducible rather than transcribed. Cite the coefficient
+  source and derivation method in comments.
+- **Acceptance gate (unchanged).** `dd_accuracy_test` tgamma mean ≥ 25.91; full
+  ctest green; no other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
 
 **B2: `erfc` — direct computation for large |z|.**
