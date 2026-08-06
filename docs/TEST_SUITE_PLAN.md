@@ -1071,6 +1071,7 @@ screenful each.
   (tgamma FP32 Lanczos, self-contained), then **B5** (erf, the asymptotic-branch
   blocker), then **B6** (erfc, downstream of B5). B1/B2/B3 (DD-side erf/erfc/tgamma)
   are independent and can be worked in any order relative to the FF set.
+- See `b2cff7d` (branch `b8-ff-divide-splitter-overflow`) for the code diff and this DONE block for the outcome.
 
 ### Phase 2 — FF validation (6 tasks)
 
