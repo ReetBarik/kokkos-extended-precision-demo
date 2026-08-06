@@ -962,6 +962,108 @@ screenful each.
   other op regresses.
 - **Scope-out.** erf large-|z| branch only; coordinate with B2.
 
+- **DONE (2026-08-06).** Raised the Taylor iteration cap, lifted the asymptotic
+  branch out of dead code by moving the switchover to |z| = 6, and added
+  optimal truncation to the (divergent) asymptotic series. Acceptance gate
+  **PASS**: `dd_accuracy_test` erf mean **24.64 → 30.67**. **Fifth post-Phase-3
+  library-side bug FIX task** (after B8, B7, B5, B1) and the **second DD-side
+  one**.
+- **Commits.** `2bb18e3` (task commit, branch `b3-dd-erf-asymptotic-branch`) →
+  `8fb1d2d` (merge to `main`, branch deleted) → this DONE block + its
+  docs-pointer (`__DONE_HASH__`).
+- **Result.** erf mean 24.64 → **30.67** (gate ≥ 25.91, **+4.76-digit margin**),
+  n=1000165, skipped=0. erf min 0.94 → **0.94, unchanged** — the input is the
+  smallest subnormal `4.94e-324` from the corpus (denormal conditioning,
+  pre-existing, bit-identical to baseline; erf gates on the mean only, and the
+  random-pass worst is 29.35 at z = −1.9102). All **48 other scored rows are
+  digit-for-digit identical**, diffed row by row against a stash-rebuilt
+  baseline binary. Full ctest **22/23** (was 21/23); the sole RED is
+  `#6 dd_accuracy_test`, now failing on **erfc only** (was erf/erfc). All six
+  demos build and run RC 0 — erf/erfc are header-only special functions with no
+  demo and no `dd_complex.hpp` consumer (grep-verified), so the blast radius is
+  `dd_accuracy_test` alone. Zero `dd_math.hpp` warnings under the project's
+  flags plus `-O3 -Wall -Wextra`. Spot-checks vs quadmath (digits, clamp 33):
+  z=6 18.46 → **32.55**, z=7 10.42 → **33.00**, z=8 5.03 → **33.00**,
+  z=8.5 3.17 → **33.00**.
+- **Root cause (differs from the original stub).** The stub blamed the large-|z|
+  asymptotic branch and asserted the Taylor branch "is fine". Reality-first
+  check falsified both halves. **(a)** Old lines 698–715 were **unreachable dead
+  code**: the `|z| < 9.0` guard cannot be false once the `|z| > 8.5` saturation
+  four lines above has returned. Had it run it would also have been wrong — the
+  erfc asymptotic series (A&S 7.1.23) is **divergent**, so its relative-eps exit
+  could never fire and the loop would have summed far past the smallest term.
+  **(b)** The ~5-digit reading at x=8 came from the **Taylor** branch, whose
+  `k ≤ 100` cap truncates a series needing `k ≈ z² + 50` terms (measured against
+  an mpmath reference: 106 at |z|=5, 130 at 6, 182 at 8, 197 at 8.5). A
+  truncated partial sum degrades *continuously*, which matches the observed
+  30.01 → 3.17 ramp exactly — a smooth fall, not the cliff a broken branch
+  would produce.
+- **Fix.** (1) **Switchover at |z| = 6** (new named constant `kTaylorMax`)
+  replacing the dead `< 9.0`, making the asymptotic branch live for
+  6 ≤ |z| ≤ 8.5. Derivation: the asymptotic expansion's optimal-truncation floor
+  is its smallest term ~ e^−z²; carried through erf = 1 − erfc that is an
+  absolute error ≈ e^−2z²/(z·√π), which first drops below u² = 2⁻¹⁰⁶ ≈ 1.23e-32
+  at |z| ≈ 5.97. Empirical crossover sweep over (0, 8.5] on a 0.005 grid
+  confirms 5.75–7.0 all give the same minimum, **29.49 digits at z = 0.435** — a
+  generic-roundoff point, not a branch artifact — so 6.0 sits mid-window
+  (5.5 → 27.46, 5.0 → 22.86). No dip at the seam: erf(5.95) = 29.70,
+  erf(6.05) = 31.00. (2) **Taylor cap 100 → 200** (measured need 130 as
+  |z| → 6⁻; sensitivity: cap 100 → 18.46, 120 → 28.35, ≥130 → 29.49; ~1.5×
+  margin). (3) **Optimal truncation** on the asymptotic branch: stop as soon as
+  |term| stops decreasing, standard for a divergent expansion, with the
+  relative-eps test demoted to a secondary exit (measured worst case 72 terms at
+  |z| = 8.5 against a k = 100 cap). (4) **Term recurrence** — see Deviation 2.
+  Series identities cited in-source: A&S 7.1.6 (Taylor), A&S 7.1.23
+  (asymptotic erfc), the same pair as the FF sibling B5.
+- **Deviation 1 (accepted on the merits — stub falsified).** The root cause
+  differs from the stub, and the fix therefore **necessarily touches the Taylor
+  loop the stub scoped out**. This was forced, not elective: the accuracy hole
+  spans |z| ∈ [4.9, 8.5] and cannot be closed from the asymptotic side alone
+  (the asymptotic branch at |z| = 4.9 is worth only ~22 digits, under gate). The
+  widening stays strictly inside `erf()`'s body in `dd_math.hpp` — no other
+  function, no other file, no test change, no tolerance change. Precedent for
+  shipping-with-deviation rather than report-and-stop: **B1**'s stub prescribed
+  g≈20.32/N=24 and reality selected g=14/N=17; **B5**'s stub prescribed an
+  overflow-probe recipe its own fix made moot. Both shipped with the deviation
+  documented.
+- **Deviation 2 (accepted — robustness win).** B5's overflow-safe term
+  recurrence is **NOT load-bearing at DD**. FP64 has the headroom: measured at
+  `kTaylorMax = 6.0` the old separate-accumulator form peaks at 3.3e238
+  (numerator 2^k·z^(2k+1)) and 1.7e255 ((2k+1)!!) against `DBL_MAX` 1.8e308, and
+  scores **digit-for-digit identically** to the recurrence at every cap from 130
+  through 240. So the overflow half of B5 does not transfer as a *correctness*
+  fix. Adopted anyway for **cap independence**: with separate accumulators
+  (2k+1)!! reaches `DBL_MAX` near k ≈ 150, so the cap and the switchover would
+  be pinned within ~10% of each other, and at `kTaylorMax = 7` the old form
+  returns **NaN outright** (measured, cap 200 and cap 400 alike). It is also
+  cheaper — one DD/double divide per term instead of a full DD/DD divide — and
+  it *replaces* machinery rather than adding it. Minimal-diff alternative is
+  documented in the task commit: drop the recurrence and set the Taylor cap to
+  140, which also clears the gate, at the cost of a ~7% margin on the cap and a
+  silent-NaN landmine one z-unit above the switchover.
+- **B2 interaction (improved, NOT closed).** erfc mean **19.50 → 24.87**,
+  downstream through the **untouched** `erfc = subtract(1, erf)`: on the
+  asymptotic branch erf returns `1 − erfc_val` with `erfc_val` small enough to
+  sit exactly in the DD `lo` word, so the outer subtract recovers ~16 digits
+  over |z| ∈ [5.25, 8.5] (z=6.0: 15.89, z=8.0: 16.24, versus 1.79 / 0.00
+  before). Above |z| = 8.5 erf still saturates to exactly 1, so erfc returns
+  exactly 0 and scores 0 digits — B2's catastrophic-cancellation defect is
+  intact and still holds the mean under gate. erfc min −0.00 → −0.00,
+  unchanged. **B3 does not close B2**; B2 is now the sole open ctest RED and
+  remains an independent task.
+- **PORT_NOTES (deferred, batched).** Fifth companion draft (§4c, "`erf`: a
+  truncated series that looks like a bad expansion"), joining B7/B8/B5/B1 for
+  the eventual consolidation pass. Draft text is parked in the `2bb18e3` commit
+  body — `PORT_NOTES.md` was **not** extended inline.
+- **Follow-ups.** None B3-owned. Backlog: **B2** (DD erfc — the sole remaining
+  ctest RED), **B6** (FF erfc quality-lift), and the PORT_NOTES consolidation
+  pass (five batched drafts now).
+- **Rule 4 respected.** `dd_math.hpp` is the ONLY file touched, and only
+  `erf()`'s body within it; no `erfc()` / `tgamma()` / other DD functions, no
+  `dd_complex.hpp`, no `ff_math.hpp` / `qf_math.hpp` / `*_complex.hpp`, and no
+  `tests/` changes (the 25.91 gate was already encoded in `dd_accuracy_test`'s
+  tolerance table).
+
 **B4: FF `exp` — original scope INVALIDATED by empirical investigation. Superseded by B8.**
 
 - **Status: closed without code fix.** The stub's originally-hypothesized root
