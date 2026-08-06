@@ -1027,6 +1027,7 @@ screenful each.
   downstream of B5, direct computation for large `|z|`; the DD-B2 sibling). B5 is the
   next executable task. B1/B2/B3 (DD-side erf/erfc/tgamma) remain independent and can
   be worked in any order relative to the FF set.
+- See `926e056` (merged via the B7 merge commit) for the code diff and this DONE block for the outcome.
 
 **B8: FF `divide` — Dekker splitter overflow at large divisors (surfaced by B4). (DONE)**
 
