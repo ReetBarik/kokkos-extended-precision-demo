@@ -57,17 +57,18 @@
 //     + kUnderflowTail lower bound); any residual tail mismatch is counted as
 //     SKIPPED, not FAILED.
 //
-//   * exp guard + the B4 stall. ff_math.hpp exp returns 0 (and prints) for
+//   * exp guard + the B8 divide fix. ff_math.hpp exp returns 0 (and prints) for
 //     a.hi >= 88.0f, so the exp round-trips narrow away from DD's +/-290 range. A
-//     SECOND, tighter limit was discovered during T2.3: exp's Taylor convergence
-//     eps (1e-15f) is FINER than FloatFloat's ~3.55e-15 (2^-48) resolution, so for
-//     ~3% of generic large-magnitude arguments the series never drops below eps,
-//     runs to its 60-iteration cap, prints "FFEXP: iteration limit", and returns 0.
-//     This surfaces via log()'s internal Newton exp on args of magnitude ~[70,85].
-//     Deferred to follow-up bug task B4 (rule 4: T2.3 does not touch ff_math.hpp);
-//     B3/B9 are therefore narrowed to +/-69 (B2's clean ceiling, |log(x)|<=69) and
-//     RESTORE to +/-85 once B4 lands. B2 (exp arg = log(x), |.|<=69) is already
-//     clean and stays on [1e-30,1e30].
+//     SECOND, tighter limit was discovered during T2.3: exp round-trips stalled at
+//     the 60-iteration cap ("FFEXP: iteration limit") on ~[70,85] arguments. T2.3
+//     hypothesized the Taylor eps (1e-15f, finer than FloatFloat's ~3.55e-15) and
+//     narrowed B3/B9 to +/-69 pending bug task B4. B4's investigation FALSIFIED the
+//     eps theory: the real defect was a Dekker splitter overflow in divide()
+//     (b.hi * split -> inf, inf - inf = NaN) poisoning log()'s Newton exp for
+//     x ≳ e^79.7. B8 fixed divide() with a scaled splitter, so B3/B9 are RESTORED to
+//     +/-79 (one integer under the ~79.7 empirical clean ceiling; not +/-85). B2
+//     (exp arg = log(x), |.|<=69) was already clean and stays on [1e-30,1e30]. See
+//     docs/TEST_SUITE_PLAN.md §B4/§B8.
 //
 //   * Large-argument trig. Per PORT_NOTES §5 sin/cos near +/-pi*k need triple-float
 //     argument reduction (out of scope). sin^2+cos^2 (B4) and the symmetry checks
@@ -483,15 +484,15 @@ int main(int argc, char** argv) {
         r = (float128)x;
       }));
     // B3: log(exp(a)) ~= a. Bound: 10u^2.
-    // Domain narrowed from [-85, 85] to [-69, 69] per pending follow-up bug task B4
-    // (FF exp iteration-limit stall on large-|x| — eps=1e-15f is finer than
-    // FloatFloat's 3.55e-15 resolution). Restore to [-85, 85] once B4 lands.
-    // (Mechanism: log()'s internal Newton evaluates exp() on generic large-magnitude
-    // arguments; the stall prints "FFEXP: iteration limit" and returns 0 — absorbed
-    // by Newton so the identity stays accurate, but stdout is spammed. B2 tops out at
-    // |log(x)|=69 and is clean, which is why 69 is the safe ceiling. See T2.3 DONE
-    // block + docs/TEST_SUITE_PLAN.md B4.)
-    gb.push_back(run_group_b_unary("B3_log_exp", kRandomN, seed++, uniform(-69.0, 69.0),
+    // Domain [-79, 79], RESTORED from the temporary [-69, 69] narrowing once B8
+    // landed. B4's originally-hypothesized eps root cause was empirically falsified;
+    // the real defect was a Dekker splitter overflow in divide() (b.hi * split -> inf,
+    // inf - inf = NaN) that poisoned log()'s Newton exp for x ≳ e^79.7. B8 fixes
+    // divide() with a scaled splitter, so the "FFEXP: iteration limit" stall no longer
+    // fires in this range. The ceiling is 79 (safety-margined one integer under the
+    // empirical clean limit of ~79.7); NOT pushed to [-85, 85]. See ff_math.hpp
+    // divide() B8 comment + docs/TEST_SUITE_PLAN.md §B4/§B8.
+    gb.push_back(run_group_b_unary("B3_log_exp", kRandomN, seed++, uniform(-79.0, 79.0),
       [](double x, float128& c, float128& r) {
         c = BackendTraits<FF>::to_quad(ff::log(ff::exp(ff::FloatFloat(x))));
         r = (float128)x;
@@ -537,13 +538,13 @@ int main(int argc, char** argv) {
         r = BackendTraits<FF>::to_quad(ff::sin(ff::multiply_scalar(a, 2.0f)));
       }));
     // B9: exp(a)*exp(-a) ~= 1. Bound: 4u^2.
-    // Domain narrowed from [-85, 85] to [-69, 69] per pending follow-up bug task B4
-    // (FF exp iteration-limit stall on large-|x| — eps=1e-15f is finer than
-    // FloatFloat's 3.55e-15 resolution). Restore to [-85, 85] once B4 lands.
-    // (B9's exp args are Route-A FloatFloat(x)/negate — empirically stall-free at
-    // ±85 — but the ceiling is matched to B3 for a single consistent exp round-trip
-    // domain and safety margin against the B4 defect.)
-    gb.push_back(run_group_b_unary("B9_exp_prod", kRandomN, seed++, uniform(-69.0, 69.0),
+    // Domain [-79, 79], RESTORED from the temporary [-69, 69] narrowing once B8
+    // landed (see B3 above for the full B4->B8 root-cause history — the real defect
+    // was divide()'s Dekker splitter overflow, fixed by B8's scaled splitter). The
+    // ceiling is matched to B3 (one integer under the ~79.7 empirical clean limit);
+    // NOT pushed to [-85, 85]. See ff_math.hpp divide() B8 comment +
+    // docs/TEST_SUITE_PLAN.md §B4/§B8.
+    gb.push_back(run_group_b_unary("B9_exp_prod", kRandomN, seed++, uniform(-79.0, 79.0),
       [](double x, float128& c, float128& r) {
         ff::FloatFloat a(x);
         c = BackendTraits<FF>::to_quad(ff::multiply(ff::exp(a), ff::exp(ff::negate(a))));
