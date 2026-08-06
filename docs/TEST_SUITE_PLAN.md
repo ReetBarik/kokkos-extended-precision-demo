@@ -896,7 +896,7 @@ screenful each.
   point B3/B9 restore to `[-79, 79]` (the true clean ceiling, safety-margined one
   integer under `79.7`).
 
-**B5: FF `erf` — asymptotic branch broken + FP32 Taylor overflow.**
+**B5: FF `erf` — asymptotic branch broken + FP32 Taylor overflow. (DONE)**
 
 - **Read first:** `ff_math.hpp:694` (erf, both branches — the large-|z|
   asymptotic branch in particular); `tests/ff_accuracy_test.cpp` erf row; B3 (DD
@@ -915,6 +915,110 @@ screenful each.
   other op regresses; verify erf(2.0) is finite and matches the oracle to ≥ FF's
   precision floor.
 - **Scope-out.** erf both branches only; coordinate with B6.
+
+- Executed 2026-08-06. Task commit `1013cb1` on branch
+  `b5-ff-erf-asymptotic-plus-taylor` (now merged to `main` via merge commit
+  `c3a512b` and the branch deleted); DONE block + docs-pointer this bundle
+  (T3.5/T3.6/B8/B7-style two-commit clean-GREEN close). **Third post-Phase-3
+  library-side bug FIX task** (after B8 and B7). **MILESTONE: this task flips
+  `ff_accuracy_test` from RED to GREEN — all originally-preserved FF-side REDs are
+  now resolved; the sole remaining ctest RED is `dd_accuracy_test`, which is DD-side
+  only (pending B1/B2/B3).**
+- **What shipped (1 file, +55/−27 LOC).** `third_party/include/ff_math.hpp` only:
+  the `erf()` body (both branches) plus the B5 comment block. **Rule 4 respected**
+  — the ONE library file the B5 stub authorizes; no other `*_math.hpp` /
+  `*_complex.hpp` (and no `dd_math.hpp`, confirming DD tgamma/erf/erfc stay
+  untouched pending B1/B2/B3).
+- **Root cause (both defects, both structural DD→FF port artifacts).** (a) **Taylor
+  branch:** the DD port accumulates each term from a separately-grown numerator
+  (`t2 = 2^k z^{2k+1}`) and denominator (`t3 = (2k+1)!!`). At FP64 those
+  intermediates stay finite; at FP32 (max ~3.4e38) both overflow around k~26–31 for
+  `|z|` in [2, 4), so `t2/t3 → inf/inf = NaN` before the convergence test fires.
+  (b) **Asymptotic branch:** the erfc asymptotic series is *divergent*, so the
+  relative-eps convergence test can never trip; the loop ran to its fixed k=60 cap
+  where `(2k−1)!!` overflows FP32 → `inf/inf = NaN`. This is the FF sibling of the
+  still-open DD-B3 (`dd_math.hpp:698` collapses to ~5 digits there rather than NaN,
+  because FP64 has the exponent headroom to avoid overflow).
+- **Fix technique (three parts, unified via the recurrence).**
+  1. **Term-recurrence rewrite**, both branches. Each term is now derived from the
+     previous via its running ratio: Taylor `term_k = term_{k−1} · 2z² / (2k+1)`;
+     asymptotic `term_k = term_{k−1} · −(2k−1) / (2z²)`. Every intermediate stays
+     O(term) → FP32 overflow is STRUCTURALLY impossible for `|z| ≤ 6` (Taylor sum
+     bounded by `(√π/2)·e^{z²}`, ~3.8e15 at `|z|=6`, well under `FLT_MAX`).
+     Reference: Abramowitz & Stegun 7.1.6 (Taylor) and 7.1.23 (asymptotic erfc),
+     cited inline (DLMF 7.12.1 is the same expansion).
+  2. **Optimal truncation** on the asymptotic branch. The sum stops as soon as
+     `|term_k| > |term_{k−1}|` — the smallest-term criterion, standard textbook
+     technique for asymptotic expansions. Adding beyond the smallest term both loses
+     accuracy and (at FP32) eventually overflows. `erf = 1 − erfc` on that branch.
+  3. **Switchover 4.0 → 3.5** (`kTaylorMax`). Reality-first deviation from the
+     task-prompt recipe (which asked for a Taylor-overflow probe to bound the
+     threshold): the recurrence eliminated the overflow entirely, so overflow is no
+     longer the binding constraint. 3.5 is chosen for the convergence-within-cap +
+     accuracy crossover — Taylor converges within the iteration cap up to `|z| ~ 4`;
+     asymptotic erf (`erf = 1 − tiny erfc`) clears 8.45 digits for `|z| >~ 3`. 3.5
+     sits inside both windows with ~0.5 margin; no dip at the boundary
+     (`erf(3.5) = 11.59` digits). `eps` 1e-15f → 1e-14f (~ FF's 2^-46 relative
+     resolution; finer values can never fire — the B4 lesson carried forward). Third
+     instance of the "reality-first check" discipline paying off (precedents: T3.4
+     pow §10, B8 unscale-by-`s`, B7 `FloatFloat(double)` constructor).
+- **Deviations from the B5 task prompt (all minor, all justified; precedent:
+  B8/B7).** (1) **Switchover-threshold derivation** — the prompt asked for a
+  Taylor-overflow probe with ~80% margin; the recurrence removed the overflow, so
+  the threshold is now derived from convergence/accuracy crossover empirics instead
+  (recorded above). (2) **Taylor-branch iteration cap raised 60 → 100** (asymptotic
+  cap stays 60): with the recurrence the Taylor loop converges quickly (~10–30
+  iterations at `|z| ~ 3`), so the 100 cap is defensive headroom, not a design
+  change; documented in the commit. (3) **erfc accidentally lifted RED → GREEN** as a
+  downstream side-effect of the erf repair (mean 4.09 → 11.85 via the untouched
+  `subtract(1, erf(z))` chain) — anticipated by the prompt ("stay RED or IMPROVE —
+  report the erfc delta explicitly, do NOT gate on it either way"); reported per
+  instruction.
+- **Acceptance-gate summary (all PASS).**
+  - **`ff_accuracy_test` erf: mean 4.13 → 13.72** (gate ≥ 8.45, clears by +5.27).
+    Spot-checks all finite: `erf(2.0) = 13.98d`, `erf(3.0) = 13.31d`,
+    `erf(5.0) = 15.00d` (capped), `erf(7.0) = 15.00d` (saturated, `|z| > 6`).
+    Binding gate MET.
+  - **`ff_accuracy_test` erfc downstream: mean 4.09 → 11.85** (also clears the 8.45
+    gate purely via the untouched `subtract(1, erf(z))` path). erfc **min still
+    −0.00** — catastrophic cancellation as `erf(z) → 1` at large `|z|` (the B2
+    pattern) persists. **erfc IS NO LONGER GATE-BLOCKING** — B6 (direct large-`|z|`
+    erfc) remains worth doing to lift the min, but is no longer required for the
+    accuracy gate. `erfc()` body was NOT touched under this task.
+  - **No other op regressed.** Pre/post diff of all 50 `ff_accuracy_test` rows: ONLY
+    erf and erfc changed. The other 48 rows are digit-for-digit identical.
+  - **Full ctest: 22/23 pass, 1737 s. `ff_accuracy_test` flipped RED → GREEN**
+    (2 failures → 0). Sole remaining failure is `dd_accuracy_test` (DD erf 24.64 /
+    erfc 19.50 / tgamma 14.56 — pending B1/B2/B3), digit-for-digit unchanged
+    (`dd_math.hpp` untouched).
+  - **All six demos** (`kokkos_ep_demo`, `_complex`, `_ff`, `_ff_complex`, `_qf`,
+    `_qf_complex`) build and run **RC 0**. **Zero new warnings** from `ff_math.hpp`
+    under `-O3 -Wall -Wextra`.
+- **B6 status update (reported, NOT closed).** erfc's mean now clears the 8.45 gate
+  via the repaired erf, so B6 is no longer required for the FF accuracy gate. B6
+  remains open as a **quality-lift task** (direct large-`|z|` erfc computation would
+  lift erfc min from −0.00 to ~8–10 digits). Per the post-B5 sequencing decision,
+  **B6 is DEFERRED until after DD-side B1/B2/B3 land** — the DD siblings have
+  analogous erfc characteristics, and a unified DD/FF fix pattern may emerge from
+  doing DD first. B6's stub stays as-is (no invalidation) and is reordered later in
+  the sequence.
+- **Follow-ups deferred (not shipped, per scope-out).** (1) A companion PORT_NOTES
+  section documenting the DD→FF port artifact (separately-grown `t2`/`t3` → FP32
+  overflow) as a general pattern to watch for in future DD→FF ports — drafted in the
+  commit body for Reet's ratification, NOT shipped inline. (2) No probe of other
+  Taylor/asymptotic series in `ff_math.hpp` (sin/cos/asin/atan/etc.) for the same
+  DD-port artifact — per the B4/B8 precedent, hypothesized-but-unverified defects get
+  their own tasks with proper failure gates, not silent scope expansion.
+- **Post-B5 sequence (REORDERED — B6 deferred).** Remaining FF library-fix stub:
+  **B6** (erfc, quality-lift, no longer gate-blocking; DEFERRED until after
+  DD-side). Next executable tasks: **DD-side B1 / B2 / B3** — DD tgamma Lanczos, DD
+  erfc direct-large-`|z|`, DD erf asymptotic-branch — independent of the FF-side and
+  workable in any order among themselves. B3 shares the fix pattern with B5
+  (asymptotic-branch repair + Taylor recurrence, adapted from FP32 to FP64
+  headroom); B1 shares the pattern with B7 (Lanczos coefficient promotion, but DD
+  needs true DD-precision coefficients since `double` doesn't exceed DD's precision
+  floor); B2 is direct-large-`|z|` erfc, the template for the eventual B6. **After
+  DD-side: B6** as the final FF quality-lift task, informed by the DD-side fixes.
 
 **B6: FF `erfc` — direct computation for large |z|.**
 
