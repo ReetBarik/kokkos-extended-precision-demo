@@ -720,35 +720,79 @@ KOKKOS_INLINE_FUNCTION DoubleDouble erfc(DoubleDouble z) {
 }
 
 // gamma — Lanczos approximation at DD precision
+//
+// B1: promoted from Lanczos g=7 / n=9 with `double` coefficients (~14.6 digits)
+// to g=14 / N=17 with DD-precision coefficients (~28.3 digits). The g=7 form
+// could not reach DD precision at ANY coefficient precision: its intrinsic
+// truncation-order ceiling is ~13 digits at large a (verified by recomputing the
+// g=7 set to 25 exact digits and re-measuring), so the order had to rise too.
+//
+// Choice of g: this is the PARTIAL-FRACTION form, c_0 + sum_k c_k/(x+k). Raising
+// g shrinks the truncation error but grows the coefficients as max|c_k| ~
+// 10^(g/2) against an O(1) sum, so cancellation eats the gain — the two effects
+// cross at an interior optimum near g=14. (Boost's lanczos24m113 uses g=20.32,
+// but for the RATIONAL evaluation form, which is immune to that cancellation;
+// its g does not transfer here. At g=20.32/N=24 this form measures 26.17 digits
+// versus 28.30 at g=14/N=17 — both clear the 25.91 gate, g=14 by 8x the margin
+// and with 7 fewer DD divisions per call.)
+//
+// Coefficients are derived for this form — not transcribed from a published
+// table — by scripts/gen_dd_lanczos_coeffs.py: an exact N-node Cauchy solve at
+// 150-digit precision (mpmath), then split into DD pairs via hi=(double)c,
+// lo=(double)(c-hi). Regenerate with:
+//     python3.12 scripts/gen_dd_lanczos_coeffs.py --g 14 --n 17
+// Reference for the method: C. Lanczos, "A Precision Approximation of the Gamma
+// Function", J. SIAM Numer. Anal. B 1 (1964) 86-96; P. Godfrey (2001), "A note
+// on the computation of the convergent Lanczos complex Gamma approximation".
 KOKKOS_INLINE_FUNCTION DoubleDouble tgamma(DoubleDouble a) {
     if (a.hi < 0.5) {
+        // Reflection. DoubleDouble_pi() is already a full two-word DD constant.
         DoubleDouble pi = DoubleDouble_pi();
         DoubleDouble sin_pi_a = sin(multiply(pi, a));
         return divide(pi, multiply(sin_pi_a, tgamma(subtract(DoubleDouble(1.0), a))));
     }
-    // Lanczos g=7 coefficients (no static — not device-safe)
-    const double c0 =  0.99999999999980993;
-    const double c1 =  676.5203681218851;
-    const double c2 = -1259.1392167224028;
-    const double c3 =  771.32342877765313;
-    const double c4 = -176.61502916214059;
-    const double c5 =  12.507343278686905;
-    const double c6 = -0.13857109526572012;
-    const double c7 =  9.9843695780195716e-6;
-    const double c8 =  1.5056327351493116e-7;
+    // Lanczos g=14, N=17 partial-fraction terms; g+1/2 = 14.5 is exact in binary.
+    // Stored as from_bits pairs (no static — not device-safe).
+    const DoubleDouble c0  = DoubleDouble::from_bits(0x3ff0000000000000ULL, 0xbae5ccd249ecc19bULL); // 0.99999999999999999999999943648104
+    const DoubleDouble c1  = DoubleDouble::from_bits(0x4130508002f7b2f9ULL, 0xbdde6b1d3115d868ULL); // 1069184.0115920883893762432104389
+    const DoubleDouble c2  = DoubleDouble::from_bits(0xc1520c269bdd76d1ULL, 0x3de92b2f192ec69eULL); // -4731034.4353920973868757761804379
+    const DoubleDouble c3  = DoubleDouble::from_bits(0x4160d8066039eda2ULL, 0xbdf87be0f302eef3ULL); // 8831027.007071319611220661269011
+    const DoubleDouble c4  = DoubleDouble::from_bits(0xc16146a8bdf4bdfaULL, 0xbe0be918cc144d3eULL); // -9057605.9361257449464911660473997
+    const DoubleDouble c5  = DoubleDouble::from_bits(0x4155446ee2ac5166ULL, 0x3dff11da6c1fbcf7ULL); // 5575099.5417674542269340470477891
+    const DoubleDouble c6  = DoubleDouble::from_bits(0xc140204023677251ULL, 0x3def145fa217e389ULL); // -2113664.2765944378983143233455817
+    const DoubleDouble c7  = DoubleDouble::from_bits(0x411dcda58708ca7dULL, 0xbdbc5517b2320728ULL); // 488297.38186947236287561024853562
+    const DoubleDouble c8  = DoubleDouble::from_bits(0xc0f010ab7f5d5dd2ULL, 0x3d9caf781e0d5b98ULL); // -65802.718594900587803425288271468
+    const DoubleDouble c9  = DoubleDouble::from_bits(0x40b2925c21e49b29ULL, 0x3d4703761d822039ULL); // 4754.3598921660242738590870170964
+    const DoubleDouble c10 = DoubleDouble::from_bits(0xc063db3ec68d4616ULL, 0xbcf6895939019f5eULL); // -158.85141303627523757502741476457
+    const DoubleDouble c11 = DoubleDouble::from_bits(0x3ffe0fc55cf4679aULL, 0x3c9c4101b51c3344ULL); // 1.8788503294985959705049465832809
+    const DoubleDouble c12 = DoubleDouble::from_bits(0xbf72ccd49a96fda3ULL, 0x3bf8020a237ad597ULL); // -0.0045898728216679255070647986148431
+    const DoubleDouble c13 = DoubleDouble::from_bits(0x3ea3e6fd3f82125aULL, 0x3b2ef6f032dc7da6ULL); // 0.00000059313481327921474287496854411048
+    const DoubleDouble c14 = DoubleDouble::from_bits(0x3d8651737a83433fULL, 0x3a2e2e9b5d81e4f9ULL); // 2.5372819792517959806144197536557e-12
+    const DoubleDouble c15 = DoubleDouble::from_bits(0xbd722f28a915bb2fULL, 0x3a09bbbac7a1a093ULL); // -1.0336529032774224293847426604539e-12
+    const DoubleDouble c16 = DoubleDouble::from_bits(0x3d4253da47c4e9eaULL, 0xb9d23f10f048fc60ULL); // 1.3022507121571147552407939906776e-13
+    const DoubleDouble sqrt_2pi = DoubleDouble::from_bits(0x40040d931ff62706ULL, 0xbcaa6a0d6f814637ULL); // sqrt(2*pi)
+
     DoubleDouble x = subtract(a, DoubleDouble(1.0));
-    DoubleDouble t = add(x, DoubleDouble(7.5));
-    DoubleDouble s = DoubleDouble(c0);
-    s = add(s, divide(DoubleDouble(c1), add(x, DoubleDouble(1.0))));
-    s = add(s, divide(DoubleDouble(c2), add(x, DoubleDouble(2.0))));
-    s = add(s, divide(DoubleDouble(c3), add(x, DoubleDouble(3.0))));
-    s = add(s, divide(DoubleDouble(c4), add(x, DoubleDouble(4.0))));
-    s = add(s, divide(DoubleDouble(c5), add(x, DoubleDouble(5.0))));
-    s = add(s, divide(DoubleDouble(c6), add(x, DoubleDouble(6.0))));
-    s = add(s, divide(DoubleDouble(c7), add(x, DoubleDouble(7.0))));
-    s = add(s, divide(DoubleDouble(c8), add(x, DoubleDouble(8.0))));
-    DoubleDouble two_pi_sqrt = DoubleDouble(2.5066282746310002); // sqrt(2*pi)
-    return multiply(multiply(two_pi_sqrt, s),
+    DoubleDouble t = add(x, DoubleDouble(14.5));  // x + g + 1/2
+    DoubleDouble s = c0;
+    s = add(s, divide(c1, add(x, DoubleDouble(1.0))));
+    s = add(s, divide(c2, add(x, DoubleDouble(2.0))));
+    s = add(s, divide(c3, add(x, DoubleDouble(3.0))));
+    s = add(s, divide(c4, add(x, DoubleDouble(4.0))));
+    s = add(s, divide(c5, add(x, DoubleDouble(5.0))));
+    s = add(s, divide(c6, add(x, DoubleDouble(6.0))));
+    s = add(s, divide(c7, add(x, DoubleDouble(7.0))));
+    s = add(s, divide(c8, add(x, DoubleDouble(8.0))));
+    s = add(s, divide(c9, add(x, DoubleDouble(9.0))));
+    s = add(s, divide(c10, add(x, DoubleDouble(10.0))));
+    s = add(s, divide(c11, add(x, DoubleDouble(11.0))));
+    s = add(s, divide(c12, add(x, DoubleDouble(12.0))));
+    s = add(s, divide(c13, add(x, DoubleDouble(13.0))));
+    s = add(s, divide(c14, add(x, DoubleDouble(14.0))));
+    s = add(s, divide(c15, add(x, DoubleDouble(15.0))));
+    s = add(s, divide(c16, add(x, DoubleDouble(16.0))));
+
+    return multiply(multiply(sqrt_2pi, s),
                  multiply(pow(t, add(x, DoubleDouble(0.5))), exp(negate(t))));
 }
 
