@@ -768,15 +768,25 @@ KOKKOS_INLINE_FUNCTION FloatFloat tgamma(FloatFloat a) {
         FloatFloat sin_pi_a = sin(multiply(pi, a));
         return divide(pi, multiply(sin_pi_a, tgamma(subtract(FloatFloat(1.0f), a))));
     }
-    const float c0 =  0.99999999999980993f;
-    const float c1 =  676.5203681218851f;
-    const float c2 = -1259.1392167224028f;
-    const float c3 =  771.32342877765313f;
-    const float c4 = -176.61502916214059f;
-    const float c5 =  12.507343278686905f;
-    const float c6 = -0.13857109526572012f;
-    const float c7 =  9.9843695780195716e-6f;
-    const float c8 =  1.5056327351493116e-7f;
+    // B7: Lanczos g=7 coefficients promoted from `float` to `double`. Stored as
+    // `float` literals, each coefficient was truncated to FP32's ~7-digit ceiling,
+    // capping tgamma at ~6 digits regardless of the enclosing FF arithmetic (a
+    // mechanical DD->FF port artifact: the `double` literals of dd_math.hpp:730-738
+    // were erroneously given `f` suffixes). As `double`, each FloatFloat(cN) call
+    // below invokes the FloatFloat(double) constructor (ff_math.hpp:94), which splits
+    // to a full FF pair (hi=(float)d, lo=(float)(d-(double)hi)) — ~14 digits, the FF
+    // resolution floor. double (53-bit) exceeds FF (48-bit), so the split is
+    // FF-exact. Coefficient set: Godfrey g=7 (P. Godfrey 2001; same values as
+    // dd_math.hpp's DD tgamma / Boost.Math / Wikipedia "Lanczos approximation").
+    const double c0 =  0.99999999999980993;
+    const double c1 =  676.5203681218851;
+    const double c2 = -1259.1392167224028;
+    const double c3 =  771.32342877765313;
+    const double c4 = -176.61502916214059;
+    const double c5 =  12.507343278686905;
+    const double c6 = -0.13857109526572012;
+    const double c7 =  9.9843695780195716e-6;
+    const double c8 =  1.5056327351493116e-7;
     FloatFloat x = subtract(a, FloatFloat(1.0f));
     FloatFloat t = add(x, FloatFloat(7.5f));
     FloatFloat s = FloatFloat(c0);
@@ -788,7 +798,9 @@ KOKKOS_INLINE_FUNCTION FloatFloat tgamma(FloatFloat a) {
     s = add(s, divide(FloatFloat(c6), add(x, FloatFloat(6.0f))));
     s = add(s, divide(FloatFloat(c7), add(x, FloatFloat(7.0f))));
     s = add(s, divide(FloatFloat(c8), add(x, FloatFloat(8.0f))));
-    FloatFloat two_pi_sqrt = FloatFloat(2.5066282746310002f);
+    // B7: sqrt(2*pi) leading factor — likewise `double` (was `2.5...f`), so it
+    // splits to a full FF pair instead of capping the whole product at ~7 digits.
+    FloatFloat two_pi_sqrt = FloatFloat(2.5066282746310002);
     return multiply(multiply(two_pi_sqrt, s),
                  multiply(pow(t, add(x, FloatFloat(0.5f))), exp(negate(t))));
 }
