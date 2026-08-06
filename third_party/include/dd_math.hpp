@@ -666,11 +666,49 @@ KOKKOS_INLINE_FUNCTION DoubleDouble round(DoubleDouble a) {
 // Special functions (in header, not benchmarked)
 // ============================================================
 
-// erf — Taylor series for |z| < ~9, asymptotic otherwise
+// erf — Taylor series for |z| < 6, asymptotic expansion for 6 <= |z| <= 8.5,
+// saturated to ±1 beyond that.
+//
+// B3: the shipped version degraded smoothly from ~30 digits at |z| = 5 to 3.17
+// digits at |z| = 8.5, pulling the uniform(-10, 10) mean to 24.64 against a
+// 25.91 gate. Two defects, both reachable only through the Taylor path:
+//   (a) The Taylor series needs k ≈ z² + 50 terms to reach DD resolution
+//       (measured against an mpmath reference: 106 terms at |z| = 5, 130 at 6,
+//       197 at 8.5) but the loop capped at k = 100. From |z| ≈ 4.9 upward it
+//       therefore returned a *truncated* sum whose error grows smoothly with
+//       |z| — which is precisely the observed ramp, with no cliff.
+//   (b) The asymptotic erfc series below is DIVERGENT, so its relative-eps
+//       exit could never fire; it would have run to its iteration cap and
+//       summed far past the smallest term. It never actually did, because the
+//       branch was unreachable: its `|z| < 9.0` guard cannot be false once the
+//       `|z| > 8.5` saturation above has returned. (The B3 stub attributed the
+//       digit loss to this branch; see DEVIATION 1 in the commit body.)
+// Fix: raise the Taylor cap, switch over to the asymptotic branch at |z| = 6
+// so it is live, and truncate that divergent series at its smallest term.
+// Series identities: A&S 7.1.6 (Taylor) and A&S 7.1.23 (asymptotic erfc);
+// same pair as the FF sibling fix (B5, ff_math.hpp:erf).
+//
+// Term recurrence. Each term is grown from its predecessor by the running
+// ratio rather than from separately accumulated numerator and denominator (the
+// DDFUN-port form). Unlike FF, where the old form overflowed FP32 outright and
+// erf returned NaN, FP64 has the headroom — at this switchover the old form's
+// intermediates peak at 3.3e238 (numerator) and 1.7e255 ((2k+1)!!), both inside
+// DBL_MAX, and it scores digit-for-digit the same. The recurrence is adopted
+// because it DECOUPLES the iteration cap from overflow: with separate
+// accumulators (2k+1)!! reaches DBL_MAX near k ≈ 150, so the cap and the
+// switchover would be pinned within ~10% of each other (at kTaylorMax = 7 the
+// old form returns NaN). It is also cheaper — one DD/double divide per term
+// instead of a full DD/DD divide. This is the DD-vs-B5 boundary: B5's overflow
+// safety was load-bearing at FP32; here it buys cap independence, not
+// correctness.
 KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
+    // DD relative resolution is u² = 2⁻¹⁰⁶ ≈ 1.23e-32; a finer eps could not
+    // fire. Convergent (Taylor) branch: primary exit. Divergent (asymptotic)
+    // branch: secondary — the smallest-term test below is the primary one.
     const double eps = 1.0e-32;
     if (z.hi == 0.0) return DoubleDouble(0.0);
-    // threshold: sqrt(104 * ln2) ≈ 8.48
+    // erfc(8.5) < 2⁻¹⁰⁴, i.e. below DD's last bit relative to 1, so erf
+    // saturates exactly. threshold: sqrt(104 * ln2) ≈ 8.48
     const double large = 8.5;
     if (z.hi >  large) return DoubleDouble( 1.0);
     if (z.hi < -large) return DoubleDouble(-1.0);
@@ -678,38 +716,55 @@ KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
     DoubleDouble z2 = multiply(z, z);
     int sign = (z.hi >= 0.0) ? 1 : -1;
     DoubleDouble az = abs(z);
+    DoubleDouble two_z2 = multiply_scalar(z2, 2.0);
 
-    if (Kokkos::fabs(z.hi) < 9.0) {
-        // Series: erf(z) = (2/sqrt(pi)) * exp(-z^2) * sum_k 2^k * z^{2k+1} / (1*3*...*(2k+1))
-        DoubleDouble t1 = DoubleDouble(0.0), t2 = az, t3 = DoubleDouble(1.0);
-        for (int k = 0; k <= 100; ++k) {
-            if (k > 0) {
-                t2 = multiply_scalar(multiply(z2, t2), 2.0);
-                t3 = multiply_scalar(t3, 2.0*k + 1.0);
-            }
-            DoubleDouble t4 = divide(t2, t3);
-            DoubleDouble t1new = add(t1, t4);
-            if (Kokkos::fabs(t4.hi) < eps * Kokkos::fabs(t1new.hi)) { t1 = t1new; break; }
-            t1 = t1new;
+    // Switchover derivation. The asymptotic expansion's optimal-truncation
+    // floor is its smallest term, ~ e^{-z²}; carried through erf = 1 - erfc
+    // that is an absolute error ≈ e^{-2z²}/(z·sqrt(pi)), which first drops
+    // below u² at |z| ≈ 5.97. Below 6 the Taylor series still converges well
+    // inside the cap (k ≤ 130). Measured over (0, 8.5] on a 0.005 grid the
+    // minimum is 29.49 digits at z = 0.435 — a generic-roundoff point, not a
+    // branch artifact — and there is no dip at the seam (erf(5.95) = 29.70,
+    // erf(6.05) = 31.00, the report clamp).
+    const double kTaylorMax = 6.0;
+
+    if (Kokkos::fabs(z.hi) < kTaylorMax) {
+        // Taylor (A&S 7.1.6): erf(z) = (2/sqrt(pi)) e^{-z²} sum_k term_k,
+        //   term_0 = |z|,  term_k = term_{k-1} · (2z²)/(2k+1).
+        // All terms positive — no cancellation; the sum is bounded by
+        // (sqrt(pi)/2)e^{z²} (≈ 4.3e15 at |z| = 6). Cap 200 against a measured
+        // worst case of 130 terms as |z| → 6⁻; the recurrence makes the excess
+        // free, since every intermediate stays O(sum).
+        DoubleDouble term = az, sum = az;
+        for (int k = 1; k <= 200; ++k) {
+            term = divide_scalar(multiply(term, two_z2), 2.0*k + 1.0);
+            DoubleDouble sumnew = add(sum, term);
+            if (Kokkos::fabs(term.hi) <= eps * Kokkos::fabs(sumnew.hi)) { sum = sumnew; break; }
+            sum = sumnew;
         }
-        DoubleDouble result = multiply_scalar(divide(multiply_scalar(t1, 2.0),
-                                multiply(sqrt(DoubleDouble_pi()), exp(z2))), 1.0);
+        DoubleDouble result = divide(multiply_scalar(sum, 2.0),
+                                     multiply(sqrt(DoubleDouble_pi()), exp(z2)));
         return (sign > 0) ? result : negate(result);
     } else {
-        // Asymptotic: erf(z) = 1 - erfc(z)
-        // erfc(z) = exp(-z^2)/sqrt(pi) * sum_k (-1)^k * (2k-1)!! / (2^k * z^{2k+1})
-        DoubleDouble t1 = DoubleDouble(0.0), t2 = DoubleDouble(1.0), t3 = az;
-        for (int k = 0; k <= 100; ++k) {
-            if (k > 0) {
-                t2 = multiply_scalar(t2, -(2.0*k - 1.0));
-                t3 = multiply(t3, multiply_scalar(z2, 2.0));
-            }
-            DoubleDouble t4 = divide(t2, t3);
-            DoubleDouble t1new = add(t1, t4);
-            if (Kokkos::fabs(divide(t4, t1new).hi) < eps) { t1 = t1new; break; }
-            t1 = t1new;
+        // Asymptotic (A&S 7.1.23): erfc(z) = e^{-z²}/sqrt(pi) · sum_k term_k,
+        //   term_0 = 1/|z|,  term_k = term_{k-1} · (-(2k-1))/(2z²).
+        // Divergent: sum only through the smallest term (optimal truncation) —
+        // terms shrink to ~e^{-z²} and then grow again, so adding past the
+        // minimum strictly loses accuracy. Measured worst case 72 terms at
+        // |z| = 8.5. Then erf = 1 - erfc; erfc is ≈ 2.2e-17 at the |z| = 6 seam
+        // and smaller above, so that subtraction is benign for erf (it is NOT
+        // for erfc itself — see erfc() below).
+        DoubleDouble term = divide(DoubleDouble(1.0), az), sum = term;
+        double prev_mag = Kokkos::fabs(term.hi);
+        for (int k = 1; k <= 100; ++k) {
+            DoubleDouble next = divide(multiply_scalar(term, -(2.0*k - 1.0)), two_z2);
+            double mag = Kokkos::fabs(next.hi);
+            if (mag > prev_mag) break;                 // smallest term reached -> stop
+            sum = add(sum, next);
+            term = next; prev_mag = mag;
+            if (mag <= eps * Kokkos::fabs(sum.hi)) break;
         }
-        DoubleDouble erfc_val = divide(t1, multiply(sqrt(DoubleDouble_pi()), exp(z2)));
+        DoubleDouble erfc_val = divide(sum, multiply(sqrt(DoubleDouble_pi()), exp(z2)));
         DoubleDouble erf_val  = subtract(DoubleDouble(1.0), erfc_val);
         return (sign > 0) ? erf_val : negate(erf_val);
     }
