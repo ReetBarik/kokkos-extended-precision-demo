@@ -1019,6 +1019,7 @@ screenful each.
   needs true DD-precision coefficients since `double` doesn't exceed DD's precision
   floor); B2 is direct-large-`|z|` erfc, the template for the eventual B6. **After
   DD-side: B6** as the final FF quality-lift task, informed by the DD-side fixes.
+- See `1013cb1` (merged via the B5 merge commit) for the code diff and this DONE block for the outcome.
 
 **B6: FF `erfc` — direct computation for large |z|.**
 
