@@ -951,7 +951,7 @@ screenful each.
   other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
 
-**B8: FF `divide` — Dekker splitter overflow at large divisors (surfaced by B4).**
+**B8: FF `divide` — Dekker splitter overflow at large divisors (surfaced by B4). (DONE)**
 
 - **Read first:** `ff_math.hpp:209` (divide, the Dekker splitter with
   `split = 8193.0f`); PORT_NOTES §4a (exp large-input NaN from splitter overflow —
@@ -999,6 +999,78 @@ screenful each.
   (scaled input) with §4a's exp final scaling. Not related to B1/B2/B3 (DD-side,
   transcendental accuracy). Independent of B5/B6/B7 (FF erf/erfc/tgamma) — those can
   be worked in any order relative to B8.
+
+- Executed 2026-08-05. Task commit `b2cff7d` on branch
+  `b8-ff-divide-splitter-overflow` (**NOT merged** — Reet decides merge posture
+  separately); DONE block + docs-pointer this bundle (T3.5/T3.6-style two-commit
+  clean-GREEN close). **First library-side bug FIX task** (B1–B7 are still open
+  stubs): unlike the Txx *validation* tasks, B8 is licensed by rule 4 to edit the
+  library — it is the "separate task with clear scope" that fixes what T2.3's B4
+  investigation surfaced.
+- **What shipped (3 files, +59/−33 LOC).** `third_party/include/ff_math.hpp`
+  (+23/−1): the `divide()` scaled-splitter fix (fix option (a) from the stub) plus a
+  ~16-line comment block. `tests/ff_property_test.cpp` (+27/−26): B3/B9 domain
+  restoration + rationale-block rewrite. `tests/README.md` (+9/−6): B3/B9 registry
+  text updated with the B4→B8 root-cause history. **`ff_math.hpp` is the sole library
+  file touched** (rule 4 respected — no `dd_math.hpp` / `qf_math.hpp` / any
+  `*_complex.hpp`).
+- **Fix technique — scaled splitter (mirrors PORT_NOTES §4a).** When
+  `|b.hi| > FLT_MAX / (split + 1) ≈ 4.15e34` (the overflow-hazard band), pre-scale the
+  divisor down by the exact power of two `s = 2^-64` (power-of-2 multiplication does
+  not round, so `b`'s full FF precision is preserved), run the UNCHANGED Dekker split,
+  then unscale the quotient. `2^-64` gives ~15 orders of headroom: the largest
+  `|b.hi| ≈ FLT_MAX = 2^128` maps to `2^64`, and `2^64 · split ≈ 2^77 ≪ FLT_MAX`, so
+  neither the divisor split nor the internal quotient's split can overflow. The
+  splitter constant (`8193.0f`) and the divide algorithm are otherwise untouched, and
+  **the non-overflow path (`s = 1.0f`) is bit-identical to the prior code** (verified:
+  0 mismatches over a dense `[1e-10, 1e34]` sweep) — same bug class as §4a, different
+  site (divide's splitter, not exp's final scaling).
+- **Prompt-error catch (justified deviation).** The task prompt's step 5 said
+  "unscale by `1/s`". That is mathematically wrong: `q = a/(b·s) = (a/b)/s`, so
+  recovering `a/b` requires **multiplying** `q` by `s`, not by `1/s` (unscaling by
+  `1/s` would yield `(a/b)/s²`). The shipped code multiplies by `s`, confirmed correct
+  by the direct probe (correct quotients to FF precision at `b.hi` up to `FLT_MAX`);
+  the deviation is flagged in the commit message. All other prompt steps followed as
+  written — prompt-error hygiene, not scope drift (precedent: T3.4 pow 30-ulp, T3.2
+  Priest→Shewchuk-weak).
+- **Test-domain restoration.** `ff_property_test` B3 (`log(exp a)≈a`) and B9
+  (`exp(a)·exp(−a)≈1`) restored `[-69,69]` → `[-79,79]` — one integer under the ~79.7
+  empirical clean ceiling, NOT pushed to the `[-85,85]` the B4 stub originally
+  anticipated (the honest ceiling is `79.7`, so `79` is the safety-margined restore).
+  The header rationale block and README B3/B9 registry text now carry the B4→B8
+  root-cause history in place of the old B4-narrowing note.
+- **Acceptance-gate summary (all PASS).**
+  - **Direct probe** (shipped `ff_math.hpp`, `|b.hi|` swept `1e30 → FLT_MAX`):
+    post-fix **0 NaN / 0 inf everywhere**; pre-fix **392 + 782 NaN** on the same
+    sweep. Endpoints `b.hi = FLT_MAX` and `b.hi = 5e34` finite and correct post-fix
+    (NaN pre-fix).
+  - **`ff_property_test` B3/B9 on `[-79,79]`: PASS, ZERO `FFEXP: iteration limit`
+    prints** across the whole run (`grep -c FFEXP = 0`) — the stub's binding gate.
+  - **Full ctest: 21/23 pass, 139.70 s.** The 2 failures are exactly the
+    deliberately-preserved REDs (`dd_accuracy_test` and `ff_accuracy_test` on
+    erf/erfc/tgamma → B1/B2/B3, B5/B6/B7), **digit-for-digit unchanged**.
+  - **`ff_accuracy_test` exp/log rows unchanged** pre vs post (exp mean 13.20, log
+    mean 14.00): the random accuracy domain never reaches the `>79.7` overflow region,
+    so no delta — expected, and per the stub the exp/log improvement was reported, not
+    gated.
+  - **All four demos** (`kokkos_ep_demo` DD, `_ff`, `_qf`, `_qf_complex`) build and
+    run **RC 0**; **zero new warnings** from `ff_math.hpp` under the build's `-O3`
+    flags.
+- **Rule 4 respected.** `ff_math.hpp` is the ONE library file edited (the B-task
+  fix mandate); no other `*_math.hpp` / `*_complex.hpp` touched. **PORT_NOTES §4a left
+  unmodified** — B8 is a NEW site of the same class, so it references §4a rather than
+  rewriting it.
+- **Follow-ups deferred (not shipped, per scope-out).** (1) A PORT_NOTES §4c-style
+  companion note documenting the divide-site fix alongside §4a — drafted separately
+  for Reet's ratification, NOT inline (per the stub's "if a new PORT_NOTES section is
+  warranted, draft it separately"). (2) The other splitter-using primitives
+  (`multiply`, `sqr`, `two_prod`) were NOT touched — per the B4 precedent,
+  hypothesized-but-unverified overflow in those sites gets its own probe + B-task, not
+  silent scope expansion.
+- **Post-B8 sequence.** Remaining FF library-fix stubs in suggested order: **B7**
+  (tgamma FP32 Lanczos, self-contained), then **B5** (erf, the asymptotic-branch
+  blocker), then **B6** (erfc, downstream of B5). B1/B2/B3 (DD-side erf/erfc/tgamma)
+  are independent and can be worked in any order relative to the FF set.
 
 ### Phase 2 — FF validation (6 tasks)
 
