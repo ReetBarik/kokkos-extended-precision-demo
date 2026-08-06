@@ -872,7 +872,7 @@ screenful each.
 - **Commits.** `402bed2` (stub rewrite: scope widened to higher-order Lanczos) →
   `9c91b16` (task commit, branch `b1-dd-tgamma-lanczos-higher-order`) → `ad51e1c`
   (merge to `main`, branch deleted) → this DONE block + its docs-pointer
-  (`__DONE_HASH__`).
+  (`045f2c9`).
 - **Result.** tgamma mean 14.56 → **28.30** (gate ≥ 25.91, **+2.39-digit
   margin**), min 0.00 → 0.00, n=1000077, skipped=88. Of the 50 scored rows
   **exactly one changed**; the other 49 — including the preserved erf 24.64 /
