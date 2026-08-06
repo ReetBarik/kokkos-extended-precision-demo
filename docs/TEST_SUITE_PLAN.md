@@ -970,7 +970,7 @@ screenful each.
   one**.
 - **Commits.** `2bb18e3` (task commit, branch `b3-dd-erf-asymptotic-branch`) →
   `8fb1d2d` (merge to `main`, branch deleted) → this DONE block + its
-  docs-pointer (`__DONE_HASH__`).
+  docs-pointer (`bd61bf0`).
 - **Result.** erf mean 24.64 → **30.67** (gate ≥ 25.91, **+4.76-digit margin**),
   n=1000165, skipped=0. erf min 0.94 → **0.94, unchanged** — the input is the
   smallest subnormal `4.94e-324` from the corpus (denormal conditioning,
