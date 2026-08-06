@@ -864,6 +864,76 @@ screenful each.
   ctest green; no other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
 
+- **DONE (2026-08-06).** Promoted DD `tgamma` to Lanczos **g=14 / N=17** with
+  DD-precision coefficients (`from_bits(hi, lo)` pairs). Acceptance gate **PASS**:
+  `dd_accuracy_test` tgamma mean **14.56 → 28.30**. **Fourth post-Phase-3
+  library-side bug FIX task** (after B8, B7, B5) and the **first DD-side one** —
+  every prior fix was FF-side.
+- **Commits.** `402bed2` (stub rewrite: scope widened to higher-order Lanczos) →
+  `9c91b16` (task commit, branch `b1-dd-tgamma-lanczos-higher-order`) → `ad51e1c`
+  (merge to `main`, branch deleted) → this DONE block + its docs-pointer
+  (`__DONE_HASH__`).
+- **Result.** tgamma mean 14.56 → **28.30** (gate ≥ 25.91, **+2.39-digit
+  margin**), min 0.00 → 0.00, n=1000077, skipped=88. Of the 50 scored rows
+  **exactly one changed**; the other 49 — including the preserved erf 24.64 /
+  erfc 19.50 REDs and every EXPECTED-MIN-DROP row — are digit-for-digit
+  identical. Full ctest **22/23, 1703s**; the sole RED is `#6 dd_accuracy_test`,
+  now failing on **erf/erfc only** (was erf/erfc/tgamma). All six demos build and
+  run RC 0 (tgamma is not in the demo op inventory, so that gate is build+run
+  only). Zero `dd_math.hpp` warnings under the project's flags plus
+  `-O3 -Wall -Wextra`.
+- **Root cause (the original stub's diagnosis was incomplete).** The stub blamed
+  the `double` coefficient literals alone. That is a real defect but **not the
+  binding one**: g=7 / n=9 has an intrinsic *truncation-order* ceiling of ~13
+  digits at large `a`, proven by recomputing the g=7 set to 25 exact digits
+  (9-node Cauchy solve, mpmath at 80-digit precision) and re-measuring — worst
+  case **13.03** over a∈[0.55,150]. Those recomputed values reproduce the shipped
+  literals to 16 digits, confirming the coefficients were already the correct g=7
+  set. Storage cap (~15.65 digits) and order cap (~13–19) both sit near ~15, so
+  fixing only storage leaves the order binding. This is exactly why **B7**'s
+  identical fix succeeded for FF — its 12.84 target sits *under* the g=7 ceiling —
+  and could not work here. Fix keeps the series structure
+  (`c_0 + Σ c_k/(x+k)` with the `sqrt(2π)·t^(x+0.5)·e^−t` prefactor), the DD
+  accumulator (already DD, untouched as in B7), and the reflection path
+  (`DoubleDouble_pi()`, already a full two-word constant); only the order, term
+  count, and coefficient storage change. `g+1/2 = 14.5` is exact in binary, so `t`
+  carries no representation error into `pow(t, x+0.5)` where `x` would amplify it.
+- **Deviation 1 (accepted on the merits).** Shipped **g=14 / N=17** instead of the
+  prescribed g≈20.32 / N=24. This repo's tgamma uses the **partial-fraction** form,
+  where max|c_k| ~ 10^(g/2) against an O(1) sum, so cancellation grows with g (at
+  g=20.32, max|c_k| ~ 1e10.5 → ~10.5 digits lost). Boost's `lanczos24m113`
+  coefficients target the **rational** (ratio-of-polynomials) form, which is
+  structurally immune to that cancellation — **the g does not transfer between
+  forms**. Raising g therefore trades truncation error against cancellation error,
+  crossing at an interior optimum near g=14. Both configurations were implemented
+  and measured on real hardware: g=20.32/N=24 → **26.17** (+0.26 margin, thin for a
+  durable gate); g=14/N=17 → **28.30** (+2.39 margin, and 7 fewer DD divisions per
+  call). Simulation under 106-bit arithmetic predicted 25.87 / 28.28 vs 26.17 /
+  28.30 measured, so the model is calibrated. Revert to the Boost parameter point
+  is one command:
+  `python3.12 scripts/gen_dd_lanczos_coeffs.py --g 20.3209821879863739013671875 --n 24`.
+- **Deviation 2 (accepted).** `scripts/gen_dd_lanczos_coeffs.py` committed (new,
+  non-library). Because the coefficients are *derived* rather than transcribed, the
+  34 hex magic numbers would otherwise be unverifiable; the script regenerates the
+  18 shipped `from_bits` pairs **bit-for-bit** (verified), carries the (g, N) sweep
+  behind `--scan`, and documents the cancellation-vs-truncation tradeoff. Requires
+  mpmath; the interpreter on the target machine is `python3.12` (the default
+  `python3` is 3.6 and has no mpmath).
+- **Coefficient source.** Derived for the partial-fraction form by the committed
+  generator: exact 17-node Cauchy solve at 150-digit working precision (mpmath
+  1.3.0), split via `hi=(double)c`, `lo=(double)(c−hi)`. Method reference:
+  C. Lanczos, "A Precision Approximation of the Gamma Function", *J. SIAM Numer.
+  Anal. B* **1** (1964) 86–96; P. Godfrey (2001), "A note on the computation of the
+  convergent Lanczos complex Gamma approximation".
+- **PORT_NOTES (deferred, batched).** Fourth companion draft, joining B7/B8/B5 for
+  the eventual consolidation pass. Draft text is parked in the `9c91b16` commit
+  body — `PORT_NOTES.md` was **not** extended inline.
+- **Follow-ups.** None. B1 does **not** unblock B2/B3 — DD erf/erfc remain
+  independent open tasks and are now the only ctest RED.
+- **Rule 4 respected.** `dd_math.hpp` is the ONLY library file touched; no
+  `ff_math.hpp` / `qf_math.hpp` / `*_complex.hpp`, and no `tests/` changes (the
+  25.91 gate was already encoded in `dd_accuracy_test`'s tolerance table).
+
 **B2: `erfc` — direct computation for large |z|.**
 
 - **Read first:** `dd_math.hpp:698-720` (erf asymptotic branch + erfc); Boost.Math
