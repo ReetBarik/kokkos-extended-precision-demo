@@ -666,6 +666,41 @@ KOKKOS_INLINE_FUNCTION DoubleDouble round(DoubleDouble a) {
 // Special functions (in header, not benchmarked)
 // ============================================================
 
+// Internal helper (not part of the DD API surface): the SUM of the asymptotic
+// erfc expansion, A&S 7.1.23,
+//     erfc(z) = e^{-z²}/sqrt(pi) · sum_k term_k,
+//     term_0 = 1/|z|,  term_k = term_{k-1} · (-(2k-1))/(2z²),
+// evaluated with optimal truncation. The series is DIVERGENT: its terms shrink
+// to ~e^{-z²} and then grow again, so summing past the smallest term strictly
+// loses accuracy and a relative-eps exit can never be the primary one. Both the
+// eps exit and the k cap are secondary; the smallest-term test below is
+// primary. Measured worst case 72 terms at |z| = 8.5.
+//
+// Only the SUM is returned, not erfc: the two callers need different scalings.
+// erf() (B3) sees only |z| <= 8.5, where e^{z²} <= 2.4e31, and divides by it;
+// erfc() (B2) runs out to the DD underflow floor |z| ~ 27.25, where e^{z²} would
+// exceed the Dekker splitter's headroom (DBL_MAX/2^27+1 ~ 1.3e300, reached at
+// |z| ~ 26.29) and turn divide() into NaN, so it multiplies by e^{-z²} instead.
+// Keeping the scaling at the call sites lets erf()'s arithmetic stay
+// bit-for-bit what B3 shipped while erfc() gets the overflow-safe form.
+//
+// Preconditions: az = |z| > 0 and z2 = z·z, both finite or +inf.
+KOKKOS_INLINE_FUNCTION DoubleDouble erfc_asymptotic_sum(DoubleDouble az, DoubleDouble z2) {
+    const double eps = 1.0e-32;   // just under DD's u² = 2⁻¹⁰⁶ ~ 1.23e-32
+    DoubleDouble two_z2 = multiply_scalar(z2, 2.0);
+    DoubleDouble term = divide(DoubleDouble(1.0), az), sum = term;
+    double prev_mag = Kokkos::fabs(term.hi);
+    for (int k = 1; k <= 100; ++k) {
+        DoubleDouble next = divide(multiply_scalar(term, -(2.0*k - 1.0)), two_z2);
+        double mag = Kokkos::fabs(next.hi);
+        if (mag > prev_mag) break;                 // smallest term reached -> stop
+        sum = add(sum, next);
+        term = next; prev_mag = mag;
+        if (mag <= eps * Kokkos::fabs(sum.hi)) break;
+    }
+    return sum;
+}
+
 // erf — Taylor series for |z| < 6, asymptotic expansion for 6 <= |z| <= 8.5,
 // saturated to ±1 beyond that.
 //
@@ -703,8 +738,8 @@ KOKKOS_INLINE_FUNCTION DoubleDouble round(DoubleDouble a) {
 // correctness.
 KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
     // DD relative resolution is u² = 2⁻¹⁰⁶ ≈ 1.23e-32; a finer eps could not
-    // fire. Convergent (Taylor) branch: primary exit. Divergent (asymptotic)
-    // branch: secondary — the smallest-term test below is the primary one.
+    // fire. This is the convergent (Taylor) branch's primary exit; the
+    // divergent asymptotic branch's exits live in erfc_asymptotic_sum().
     const double eps = 1.0e-32;
     if (z.hi == 0.0) return DoubleDouble(0.0);
     // erfc(8.5) < 2⁻¹⁰⁴, i.e. below DD's last bit relative to 1, so erf
@@ -716,7 +751,6 @@ KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
     DoubleDouble z2 = multiply(z, z);
     int sign = (z.hi >= 0.0) ? 1 : -1;
     DoubleDouble az = abs(z);
-    DoubleDouble two_z2 = multiply_scalar(z2, 2.0);
 
     // Switchover derivation. The asymptotic expansion's optimal-truncation
     // floor is its smallest term, ~ e^{-z²}; carried through erf = 1 - erfc
@@ -735,6 +769,7 @@ KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
         // (sqrt(pi)/2)e^{z²} (≈ 4.3e15 at |z| = 6). Cap 200 against a measured
         // worst case of 130 terms as |z| → 6⁻; the recurrence makes the excess
         // free, since every intermediate stays O(sum).
+        DoubleDouble two_z2 = multiply_scalar(z2, 2.0);
         DoubleDouble term = az, sum = az;
         for (int k = 1; k <= 200; ++k) {
             term = divide_scalar(multiply(term, two_z2), 2.0*k + 1.0);
@@ -746,31 +781,106 @@ KOKKOS_INLINE_FUNCTION DoubleDouble erf(DoubleDouble z) {
                                      multiply(sqrt(DoubleDouble_pi()), exp(z2)));
         return (sign > 0) ? result : negate(result);
     } else {
-        // Asymptotic (A&S 7.1.23): erfc(z) = e^{-z²}/sqrt(pi) · sum_k term_k,
-        //   term_0 = 1/|z|,  term_k = term_{k-1} · (-(2k-1))/(2z²).
-        // Divergent: sum only through the smallest term (optimal truncation) —
-        // terms shrink to ~e^{-z²} and then grow again, so adding past the
-        // minimum strictly loses accuracy. Measured worst case 72 terms at
-        // |z| = 8.5. Then erf = 1 - erfc; erfc is ≈ 2.2e-17 at the |z| = 6 seam
+        // Asymptotic (A&S 7.1.23), optimal truncation — see
+        // erfc_asymptotic_sum() above, which B2 factored out of this branch so
+        // erfc() can invoke the identical series directly. The scaling stays
+        // here: |z| <= 8.5 on this path, so e^{z²} <= 2.4e31 and the divide is
+        // safe (erfc()'s multiply-by-e^{-z²} form is the one that has to reach
+        // |z| ~ 26). Then erf = 1 - erfc; erfc is ≈ 2.2e-17 at the |z| = 6 seam
         // and smaller above, so that subtraction is benign for erf (it is NOT
         // for erfc itself — see erfc() below).
-        DoubleDouble term = divide(DoubleDouble(1.0), az), sum = term;
-        double prev_mag = Kokkos::fabs(term.hi);
-        for (int k = 1; k <= 100; ++k) {
-            DoubleDouble next = divide(multiply_scalar(term, -(2.0*k - 1.0)), two_z2);
-            double mag = Kokkos::fabs(next.hi);
-            if (mag > prev_mag) break;                 // smallest term reached -> stop
-            sum = add(sum, next);
-            term = next; prev_mag = mag;
-            if (mag <= eps * Kokkos::fabs(sum.hi)) break;
-        }
+        DoubleDouble sum = erfc_asymptotic_sum(az, z2);
         DoubleDouble erfc_val = divide(sum, multiply(sqrt(DoubleDouble_pi()), exp(z2)));
         DoubleDouble erf_val  = subtract(DoubleDouble(1.0), erfc_val);
         return (sign > 0) ? erf_val : negate(erf_val);
     }
 }
 
+// erfc — direct asymptotic expansion for z >= 6.5, 1 - erf(z) below that.
+//
+// B2: `erfc(z) = subtract(DoubleDouble(1.0), erf(z))` for ALL z is catastrophic
+// cancellation as erf(z) -> 1. erf is accurate to u² RELATIVE to 1, so the
+// difference carries an absolute error ~u² and erfc's relative error is
+// u²/erfc(z) — a loss of exactly log10(1/erfc(z)) digits, which is the smooth
+// ramp measured off the shipped code: 28.3 digits at z = 2, 26.6 at 3, 23.0 at
+// 4, 18.4 at 5, and 0 above z = 8.5, where erf saturates to exactly 1 and erfc
+// returns exactly 0. Mean over uniform(-10, 10) was 24.87 against a 25.91 gate.
+// (B3 had already lifted that from 19.50 by making erf's asymptotic branch
+// live: over 6 <= z <= 8.5 erf returns 1 - erfc_val with erfc_val small enough
+// to land in the lo word, so the outer subtract recovered ~16 digits. A lo-word
+// round trip is a 53-bit channel, so ~16 digits is all it can ever recover —
+// hence the flat 16-digit shelf there, and hence B2.)
+//
+// Fix: for z >= kDirectMin, evaluate erfc directly from the SAME asymptotic
+// series erf() uses (erfc_asymptotic_sum, A&S 7.1.23) and never form 1 - erf.
+// Negative z needs no such path: erfc(-|z|) = 2 - erfc(|z|) is ~2, so
+// subtract(1, erf) is benign there and already scores 31 digits.
+//
+// Threshold derivation. The cut is placed where the direct series stops being
+// worse than the fallback it replaces — at EVERY measured point, not on
+// average, because the uniform(-10, 10) mean is flat to ±0.03 digit across the
+// whole [5.6, 6.6] candidate window (27.99 down to 27.96) and so decides
+// nothing. What the fallback delivers above z = 6.0 is the lo-word shelf B3
+// created: a 53-bit channel, measured mean 16.53 digits over [6.3, 8.5] with
+// roundoff scatter reaching 19.20. The direct series rises ~5.3 digits per unit
+// z through that shelf and clears its full scatter envelope at z ~ 6.44
+// (highest regressing point 6.4230 on a 0.0005 grid). kDirectMin = 6.5 sits
+// just above, and over 6001 grid points on [6, 9] at 0.0005 spacing NO point
+// scores worse than the shipped 1 - erf code did.
+//
+// Rejected alternative — kDirectMin = 5.75, the balanced-error (minimax) cut.
+// It lifts the global trough of the composite curve from 13.55 to 14.50 digits
+// (the trough is the last fallback point before the seam, where 1 - erf's
+// cancellation is deepest), and it is the mean-optimal point (27.99 vs 27.97).
+// But it regresses 34 of 721 grid points over (4, 10] by up to 1.86 digits, all
+// inside the 16-18 digit scatter band. Trading measured regressions for a
+// 0.95-digit gain on a trough that is 12 digits under gate either way is not
+// worth it; the 13.55-digit trough at z = 5.915 is pre-existing 1 - erf
+// behaviour and is left exactly as it was.
+//
+// KNOWN LIMITATION, not closed here. The 1 - erf cancellation is a ramp, not a
+// cliff, so it also costs digits well below any usable threshold for THIS
+// series — on a 0.02 grid, erfc scores under the 25.91 test gate at scattered
+// points from z = 2.90 and at every point from z = 3.68 to 7.70. A direct
+// asymptotic path cannot help there: its optimal-truncation floor is worth only
+// ~11 digits at z = 5, i.e. worse than the subtract it would replace. Closing
+// that band needs a different algorithm (a Lentz continued fraction, A&S
+// 7.1.14, or a triple-double erf). The dd_accuracy_test row gates on the MEAN
+// and passes at 27.97 vs 25.91; the pointwise band is a separate, open concern.
 KOKKOS_INLINE_FUNCTION DoubleDouble erfc(DoubleDouble z) {
+    // See derivation above. Sits above erf()'s own kTaylorMax = 6.0 seam, so
+    // [6.0, 6.5) of the lo-word shelf is still served by the fallback.
+    const double kDirectMin = 6.5;
+    // Above this, erfc(z) < 2⁻¹⁰⁷⁴ (the smallest IEEE double subnormal) and +0
+    // is the only representable answer, so honest underflow beats evaluating
+    // the series. Derivation: erfc(z) ~ e^{-z²}/(z·sqrt(pi)) crosses 4.94e-324
+    // at z ~ 27.28 (measured: erfc(27.2) = 1.0e-323, erfc(27.3) = 4.2e-326).
+    // This also keeps z² away from the range where 2z² would overflow the
+    // Dekker splitter inside divide() (b.hi · 2²⁷+1 > DBL_MAX above 1.3e300)
+    // and turn the series into NaN — reachable from the corpus, which feeds
+    // erfc DBL_MAX.
+    const double kUnderflowMax = 27.25;
+    if (z.hi >= kDirectMin) {
+        if (!(z.hi <= kUnderflowMax)) return DoubleDouble(0.0);  // also catches +inf
+        DoubleDouble z2 = multiply(z, z);
+        DoubleDouble sum = erfc_asymptotic_sum(z, z2);
+        // e^{-z²}, not 1/e^{z²}: dividing by e^{z²} would (a) hit dd exp()'s
+        // hard ±300 argument guard at z = 17.32 and return 0, and (b) overflow
+        // the Dekker splitter in divide() at z = 26.29. The multiply form has
+        // neither failure and reaches the underflow floor above.
+        DoubleDouble emz2;
+        if (z2.hi < 300.0) {
+            emz2 = exp(negate(z2));
+        } else {
+            // Same ±300 guard: quarter the argument (max |z²/4| = 185.7 at
+            // kUnderflowMax) and square twice. Costs ~2 bits of the relative
+            // error of exp; measured 30.45 digits at z = 20, 29.38 at z = 26.
+            emz2 = exp(divide_scalar(negate(z2), 4.0));
+            emz2 = multiply(emz2, emz2);
+            emz2 = multiply(emz2, emz2);
+        }
+        return divide(multiply(sum, emz2), sqrt(DoubleDouble_pi()));
+    }
     return subtract(DoubleDouble(1.0), erf(z));
 }
 
