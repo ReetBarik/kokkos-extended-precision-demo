@@ -950,7 +950,7 @@ screenful each.
 
 **B2: DD erfc direct asymptotic expansion for |z| ≥ 6.5. (DONE)**
 
-- Executed 2026-08-07. Task commit `ebed8c7`, merge `<fill-in>`.
+- Executed 2026-08-07. Task commit `ebed8c7`, merge `8225671`.
 - **`third_party/include/dd_math.hpp` (edit, +129/-19).** Factored
   `erfc_asymptotic_sum(az, z2)` out of erf()'s asymptotic branch
   (A&S 7.1.23, optimal truncation, returns the raw sum; scaling
