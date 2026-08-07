@@ -112,12 +112,20 @@ Net result: faster *and* more accurate.
 
 ---
 
-## 4. Two outright bugs the probe found
+## 4. Outright bugs
 
-The accuracy table had two ops showing `min digits = 0.0` (i.e. at least one
-sample produced a wrong result). `scripts/probe_op.cpp` re-runs the demo's
-inputs on the host and prints the worst-accuracy elements with bit patterns,
-which made both bugs obvious.
+**§4a–§4b — found by the probe.** The accuracy table had two ops showing
+`min digits = 0.0` (i.e. at least one sample produced a wrong result).
+`scripts/probe_op.cpp` re-runs the demo's inputs on the host and prints the
+worst-accuracy elements with bit patterns, which made both bugs obvious.
+
+**§4c–§4h — found by the test suite.** These were added later, by the
+post-Phase-3 library-side fix tasks (B1–B8 in `docs/TEST_SUITE_PLAN.md`), which
+the accuracy and property suites surfaced rather than the probe. They cover the
+DD backend as well as FF: the DD entries live here, next to their FF siblings,
+because in each case the lesson is a shared-series or shared-identity one rather
+than a format-specific one. (QD → QF port notes live separately in
+`docs/PORT_NOTES_QF.md`.)
 
 ### 4a. `exp` NaN at large inputs
 
@@ -171,6 +179,173 @@ return ffloat((float)rounded, (float)(rounded - (double)(float)rounded));
 
 This also benefits `floor`, `ceil`, `round`, `trunc`, `fmod`, and the
 argument reduction in `sincos` — all of them call `ffnint`.
+
+### 4c. `tgamma` Lanczos coefficients at FF precision: an `f` suffix cost half the mantissa
+
+tgamma Lanczos coefficients at FF precision (B7). The DD->FF port suffixed the
+g=7 coefficient literals with `f`, truncating each to FP32 (~7 digits) and
+capping tgamma. Fix: store as `double`; FloatFloat(double) splits to a full FF
+pair (double's 53 bits > FF's 48, so FF-exact). sqrt(2*pi) leading factor
+promoted identically. Structure unchanged. The DD sibling (B1) has the analogous
+defect but caps at ~15 digits, not ~7, since DD has mantissa headroom above the
+double coefficients -- so B1 needs true DD-precision coefficients, whereas FF
+only needs double.
+
+Cross-ref: TEST_SUITE_PLAN.md §B7 DONE (commit 926e056).
+
+### 4d. `divide`'s Dekker splitter: the same overflow as §4a, at a second site
+
+**Symptom**: `log(x)` for `x ≳ e^79.7 ≈ 1.5e34` returned NaN. The NaN fed back
+into `exp()` on the next Newton step, and because NaN comparisons always
+evaluate false, the Taylor convergence check never broke — the loop stalled at
+its 60-iteration cap and printed `FFEXP: iteration limit`.
+
+**Cause**: `divide()` extracts the divisor's high half with a Dekker split that
+computes `conb = b.hi * split` (`split = 8193.0f = 2^13+1`). For
+`|b.hi| > FLT_MAX / (split + 1) ≈ 4.15e34` that product overflows to `±inf`,
+and then `b1 = conb - (conb - b.hi) = inf - inf = NaN` corrupts the split.
+`log()`'s Newton iteration divides by `exp(b) ≈ a`, which crosses that band for
+`x ≳ 1.5e34`.
+
+**Fix**: scaled splitter. When `|b.hi|` is in the overflow-hazard band,
+pre-scale the divisor down by the exact power of two `s = 2^-64` (power-of-2
+multiplication does not round, so `b`'s full FF precision survives), run the
+*unchanged* Dekker split, then unscale. `2^-64` leaves ~15 orders of headroom:
+the largest `|b.hi| ≈ FLT_MAX = 2^128` maps to `2^64`, and
+`2^64 · split ≈ 2^77 ≪ FLT_MAX`. The non-overflow path (`s = 1.0f`) is
+bit-identical to the prior code.
+
+**Watch the direction of the unscale.** `q = a / (b·s) = (a/b) / s`, so
+recovering `a/b` means **multiplying** `q` by `s`, not by `1/s` — the latter
+yields `(a/b)/s²`. This is the easy sign error in every scaled-splitter fix.
+
+**Why DD didn't see this**: DD's splitter is `134217729.0` (2^27+1) against
+FP64's ~1.8e308 range, so the hazard band sits far outside any operand a real
+computation produces. Same bug class as §4a; different site (divide's splitter,
+not exp's final scaling). §4a was deliberately left unmodified.
+
+Cross-ref: TEST_SUITE_PLAN.md §B8 DONE (commit b2cff7d). Composed at
+consolidation time from the B8 DONE block and task commit — no verbatim draft
+was parked at close.
+
+### 4e. `erf` at FP32: separately-grown numerator and denominator overflow before they divide
+
+**Symptom**: FF `erf` returned outright NaN across ~[1.9, 6] — a smooth,
+well-conditioned range with nothing special about it (mean 3.94, min 0.00).
+
+**Cause, two compounding defects.** (a) The DD port accumulates each Taylor
+term from a separately-grown numerator `t2 = 2^k z^{2k+1}` and denominator
+`t3 = (2k+1)!!`. At FP64 both intermediates stay finite; at FP32 (max ~3.4e38)
+both overflow around `k ~ 26–31` for `|z|` in [2, 4), so `t2/t3 → inf/inf = NaN`
+before the convergence test ever fires. (b) The asymptotic branch's erfc series
+is *divergent*, so its relative-eps test can never trip; the loop ran to its
+fixed `k=60` cap, where `(2k−1)!!` overflows FP32 to the same NaN.
+
+**Fix**: rewrite both branches around a term recurrence — Taylor
+`term_k = term_{k−1} · 2z² / (2k+1)`, asymptotic
+`term_k = term_{k−1} · −(2k−1) / (2z²)` — so every intermediate stays `O(term)`
+and FP32 overflow becomes structurally impossible for `|z| ≤ 6` (the Taylor sum
+is bounded by `(√π/2)·e^{z²}`, ~3.8e15 at `|z|=6`). Add optimal truncation to
+the asymptotic branch: stop as soon as `|term_k| > |term_{k−1}|`, the
+smallest-term criterion. Move the switchover 4.0 → 3.5. Convergence `eps`
+1e-15f → 1e-14f — roughly FF's 2^-46 relative resolution; anything finer can
+never fire, which is the B4 lesson carried forward.
+
+**General lesson**: a term ratio is not merely faster than recomputing a
+numerator and a denominator each iteration — at a narrow exponent range it is
+the only form that survives. Wherever a DD series grows two large intermediates
+and divides them, the FF port needs the recurrence, whether or not the DD
+original showed any symptom.
+
+**Cross-format note**: the DD sibling (§4g) carries the same divergent-series
+and iteration-cap defects, but FP64's headroom rendered them as a gently sagging
+mean instead of a NaN — which is why FF surfaced this family first.
+
+Cross-ref: TEST_SUITE_PLAN.md §B5 DONE (commit 1013cb1). Composed at
+consolidation time from the B5 DONE block and task commit — no verbatim draft
+was parked at close.
+
+### 4f. `tgamma` at DD precision: the coefficient fix that worked for FF is not enough
+
+tgamma at DD precision (B1). Promoting the g=7 Lanczos coefficients from
+double to DD -- the fix that worked for FF in B7 -- does NOT reach DD
+precision: g=7/n=9 has an intrinsic truncation ceiling of ~13 digits at
+large a, verified against 25-digit-exact coefficients. The order must rise
+too. Shipped g=14/N=17 with coefficients derived for the partial-fraction
+form. Note that published high-order Lanczos tables (Boost lanczos24m113)
+are for the RATIONAL form and their g does not transfer: in the
+partial-fraction form max|c_k| ~ 10^(g/2) against an O(1) sum, so high g
+loses to cancellation what it gains in truncation, with an interior optimum
+near g=14. Coefficients are regenerable via
+scripts/gen_dd_lanczos_coeffs.py rather than transcribed.
+
+Cross-ref: TEST_SUITE_PLAN.md §B1 DONE (commit 9c91b16).
+
+### 4g. `erf`: a truncated series that looks like a bad expansion
+
+**Symptom**: DD `erf` scored ~30 digits up to |z| = 5, then fell off smoothly
+to 3.2 digits by |z| = 8.5, where it jumped back to full precision. FF `erf`
+(B5) returned outright NaN over a comparable band.
+
+**Cause**: the DDFUN port's `erf` has a Taylor branch and an asymptotic
+branch, and the Taylor series needs `k ~ z^2 + 50` terms. Both ports capped
+the loop well below that (DD 100, FF 60). DD therefore returned a truncated
+partial sum — smoothly wrong, no NaN, no warning — while FP32's narrower
+exponent range made FF's intermediates overflow first and NaN loudly.
+
+The second half is a port artifact in both: the asymptotic branch's guard
+(`|z| < 9.0` in DD) sits *above* the saturation cutoff (`|z| > 8.5`), so the
+branch is unreachable. Dead code hides its own bugs — DD's asymptotic branch
+also lacked optimal truncation, which would have shown up immediately had it
+ever run.
+
+**Fix**: switch over at |z| = 6 (where the asymptotic expansion's
+smallest-term floor first clears u^2), raise the Taylor cap past the measured
+requirement, and truncate the divergent asymptotic series at its smallest
+term.
+
+**Cross-format note**: this is the one place where FP64's headroom was a
+*liability* for diagnosis. The same defect that FF surfaced as NaN in T2.4, DD
+hid as a gently sagging mean for two more task cycles. Where DD and FF share a
+series loop, check the iteration cap against the term count the series
+actually needs, not against the format's exponent range.
+
+Cross-ref: TEST_SUITE_PLAN.md §B3 DONE (commit 2bb18e3).
+
+### 4h. `erfc`: when the identity is the bug
+
+**Symptom**: DD `erfc` lost accuracy smoothly from ~30 digits near 0 to 16 by
+z = 5.5, sat on a flat 16-digit shelf to z = 8.5, then returned exactly 0.
+
+**Cause**: the port defines `erfc(z) = 1 - erf(z)`, which is mathematically
+exact and numerically hopeless. `erf` is accurate to u^2 *relative to 1*, so
+the difference carries an absolute error ~u^2 and `erfc` loses
+log10(1/erfc(z)) digits — by construction, at every precision. No amount of
+work on `erf` fixes it. B3 demonstrated the ceiling: making `erf`'s
+asymptotic branch live routed `erfc` through `erf`'s lo word, which lifted
+the mean 19.50 -> 24.87 and then stalled at exactly the 53 bits a `double`
+lo word can carry.
+
+**Fix**: compute `erfc` directly from the asymptotic series wherever that
+series is worth more than the subtract — here z >= 6.5 — and never form
+`1 - erf` there.
+
+**Cross-format note**: two DDFUN-port limits only become visible once a
+function's output range is extended past ~1e-130. `exp` carries a hard
+`|arg| >= 300 -> 0` guard that has nothing to do with IEEE range (e^-300 is
+1e-131, eight decades above DBL_MIN), and the FMA-free Dekker `two_prod`
+splitter overflows on operands above DBL_MAX/(2^27+1) ~ 1.3e300, so
+`divide(x, huge)` returns NaN rather than 0. Both are invisible to any test
+whose sampling domain keeps results near 1. Prefer `multiply(x, exp(-a))` to
+`divide(x, exp(a))` in extended-precision special functions: it dodges both.
+
+**General**: when a special function is defined as an identity over another
+one, check the identity's conditioning before tuning the callee. `1 - erf`,
+`1 - cos`, `log(1 + x)`, `exp(x) - 1` are the same trap; three of those have
+dedicated library entry points for exactly this reason, and `erfc` is the
+fourth.
+
+Cross-ref: TEST_SUITE_PLAN.md §B2 DONE (commit ebed8c7).
 
 ---
 
