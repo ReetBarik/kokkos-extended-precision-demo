@@ -863,6 +863,20 @@ screenful each.
 - **Acceptance gate (unchanged).** `dd_accuracy_test` tgamma mean ≥ 25.91; full
   ctest green; no other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
+- **STATUS (resolved).** See DONE block below (commit `9c91b16`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: tgamma mean is now **28.30**, not 14.56, and tgamma lives at
+  `dd_math.hpp:912-962` (the DD coefficient pairs at ~920-937), not the cited
+  `723-751` / `729-738`. Root-cause finding on close: the `double` coefficient
+  literals were a real defect but **not the binding one** — the g=7/n=9
+  *truncation order* caps at ~13 digits at large `a` regardless of how exactly
+  the coefficients are stored, so fixing storage alone could never clear the
+  gate. Shipped **g=14/N=17**, not the prescribed g≈20.32/N=24: Boost's
+  `lanczos24m113` g is derived for the **rational** evaluation form and does not
+  transfer to this repo's **partial-fraction** form, where max|c_k| ~ 10^(g/2)
+  against an O(1) sum makes cancellation grow with g (g=20.32 measured 26.17 vs
+  g=14's 28.30). See DONE for full detail; the general lesson is consolidated as
+  `PORT_NOTES.md` §4f.
 
 - **DONE (2026-08-06).** Promoted DD `tgamma` to Lanczos **g=14 / N=17** with
   DD-precision coefficients (`from_bits(hi, lo)` pairs). Acceptance gate **PASS**:
@@ -947,6 +961,28 @@ screenful each.
 - **Acceptance gate.** `dd_accuracy_test` erfc mean ≥ 25.91; full ctest green; no
   other op regresses.
 - **Scope-out.** erfc path only; cross-reference B3 for the shared branch.
+- **STATUS (resolved).** See DONE block below (commit `ebed8c7`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: erfc mean is now **27.97**, and erfc lives at `dd_math.hpp:850-885`
+  (`kDirectMin` at 853, `kUnderflowMax` at 862), not the cited `698-720` /
+  `718-720`. Note the **two-stage history** behind the "mean 19.50" figure above:
+  **B3** lifted it 19.50 → **24.87** without touching `erfc()` at all — making
+  `erf`'s asymptotic branch live routed `1 − erf` through `erf`'s `lo` word,
+  which recovers ~16 digits over |z| ∈ [5.25, 8.5] and then stalls at exactly the
+  53 bits a `double` lo word holds — and B2 then closed the residual 24.87 →
+  27.97. Root-cause finding on close: the defect is **wider than this stub
+  states, and a ramp rather than a cliff**. Loss is `log10(1/erfc(z))` by
+  construction, so it starts near z ~ 1 (22.95 digits at z = 4), and *every*
+  point from z = 3.68 through 7.70 sits under the 25.91 gate. The prescribed
+  direct-asymptotic fix provably cannot reach that band — the expansion's
+  optimal-truncation floor is worth only ~11 digits at z = 5, worse than the
+  subtract it would replace — so [3.68, 7.70] remains sub-gate and the row passes
+  on the mean, which is what `dd_accuracy_test` actually encodes. Also: threshold
+  shipped at **6.5**, not this stub's "~0.5–1; Boost uses |z| > 0.5" — Boost's
+  0.5 cut selects a rational minimax approximation, a different algorithm whose
+  accuracy floor is not tied to z, so that number does not transfer to the series
+  this stub prescribes. **B6 must not be re-scoped to close the residual band.**
+  See DONE for full detail; consolidated as `PORT_NOTES.md` §4h.
 
 **B2: DD erfc direct asymptotic expansion for |z| ≥ 6.5. (DONE)**
 
@@ -1078,6 +1114,24 @@ screenful each.
 - **Acceptance gate.** `dd_accuracy_test` erf mean ≥ 25.91; full ctest green; no
   other op regresses.
 - **Scope-out.** erf large-|z| branch only; coordinate with B2.
+- **STATUS (resolved).** See DONE block below (commit `2bb18e3`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: erf mean is now **30.67**, not 24.64, and erf lives at
+  `dd_math.hpp:739-797` (`kTaylorMax` at 763), not the cited `669-716` /
+  `698-715`. Root-cause finding on close: **both halves of the diagnosis above
+  were falsified.** The large-|z| asymptotic branch this stub blames was
+  **unreachable dead code** — its `|z| < 9.0` guard cannot be false once the
+  `|z| > 8.5` saturation four lines above has returned — and the Taylor branch
+  this stub calls "fine" was the actual defect: its `k ≤ 100` cap truncates a
+  series needing `k ≈ z² + 50` terms (182 at |z| = 8). A truncated partial sum
+  degrades *continuously*, which is why the observed 30.01 → 3.17 fall is a
+  smooth ramp and not the cliff a broken branch would produce — the tell that
+  should have redirected the diagnosis earlier. The fix therefore **necessarily
+  touched the Taylor loop this stub scopes out**; the hole spans |z| ∈ [4.9, 8.5]
+  and cannot be closed from the asymptotic side alone. B2 interaction: this fix
+  lifted erfc 19.50 → 24.87 downstream through the untouched `1 − erf`, but did
+  **not** close B2. See DONE for full detail; consolidated as `PORT_NOTES.md`
+  §4g.
 
 - **DONE (2026-08-06).** Raised the Taylor iteration cap, lifted the asymptotic
   branch out of dead code by moving the switchover to |z| = 6, and added
@@ -1237,6 +1291,25 @@ screenful each.
   other op regresses; verify erf(2.0) is finite and matches the oracle to ≥ FF's
   precision floor.
 - **Scope-out.** erf both branches only; coordinate with B6.
+- **STATUS (resolved).** See DONE block below (commit `1013cb1`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: erf mean is now **13.72**, not 3.94, the NaN band over ~[1.9, 6] is
+  gone (`erf(2.0)` = 13.98 digits, finite), and erf lives at
+  `ff_math.hpp:716-786` (`kTaylorMax` at 749), not the cited `694`. Root-cause
+  finding on close: **the diagnosis above was confirmed — both halves — but the
+  fix path diverged from the recipe.** (a) and (b) are one defect wearing two
+  faces: separately-grown `t2 = 2^k z^{2k+1}` / `t3 = (2k+1)!!` intermediates
+  overflow FP32 at k ~ 26–31, and the divergent asymptotic series runs to its
+  k=60 cap where `(2k−1)!!` does the same. A single **term recurrence** fixes
+  both by keeping every intermediate O(term). Consequence: the recurrence
+  **eliminated the overflow outright**, so the Taylor→asymptotic switchover
+  (4.0 → 3.5) is set by the convergence/accuracy crossover, *not* by the
+  Taylor-overflow probe the task prompt prescribed to bound it — the probe was
+  made moot by its own fix. Downstream side effect (anticipated, not gated):
+  erfc lifted 4.09 → 11.85 through the untouched `subtract(1, erf(z))`, flipping
+  `ff_accuracy_test` RED → GREEN and **de-gating B6**, which survives only as a
+  quality-lift task for erfc's min. See DONE for full detail; consolidated as
+  `PORT_NOTES.md` §4e.
 
 - Executed 2026-08-06. Task commit `1013cb1` on branch
   `b5-ff-erf-asymptotic-plus-taylor` (now merged to `main` via merge commit
@@ -1377,6 +1450,24 @@ screenful each.
 - **Acceptance gate.** `ff_accuracy_test` tgamma mean ≥ 8.45; full ctest green; no
   other op regresses.
 - **Scope-out.** tgamma only (not lgamma/digamma); no new test file.
+- **STATUS (resolved).** See DONE block below (commit `926e056`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: tgamma mean is now **12.84** (min **11.42**), not 6.10 / 5.94, and
+  tgamma lives at `ff_math.hpp:793-834` with the promoted coefficients at
+  ~809-818, not the cited `749`. Root-cause finding on close: the diagnosis above
+  was **correct and complete** — the defect really was single-`float` coefficient
+  literals — but two details of the prescription were off. (1) The abbreviated
+  "`c1=676.5203681218851f`, …" notation undercounted: the Lanczos g=7 body has
+  **nine** coefficients (c0–c8) plus the `sqrt(2π)` leading factor, ten constants
+  in all, and the leading factor matters because it multiplies the whole result.
+  (2) No explicit `from_bits(hi, lo)` split was needed — the existing
+  `FloatFloat(double)` constructor at `ff_math.hpp:94` already performs exactly
+  that split, so the fix reduced to **deleting the `f` suffixes**; because
+  `double`'s 53-bit mantissa exceeds FF's 48, the result is FF-exact. The
+  accompanying "rewrite the accumulator arithmetic" step was a no-op: the
+  accumulator was already FF. Contrast the DD sibling **B1**, where the analogous
+  coefficient promotion is *necessary but not sufficient*. See DONE for full
+  detail; consolidated as `PORT_NOTES.md` §4c.
 
 - Executed 2026-08-05. Task commit `926e056` on branch
   `b7-ff-tgamma-lanczos-precision` (now merged to `main` via merge commit `08086c2`
