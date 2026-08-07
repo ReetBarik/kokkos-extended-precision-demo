@@ -713,6 +713,41 @@ KOKKOS_INLINE_FUNCTION FloatFloat round(FloatFloat a) {
 // Special functions (in header, not benchmarked)
 // ============================================================
 
+// Internal helper (not part of the FF API surface): the SUM of the asymptotic
+// erfc expansion, A&S 7.1.23,
+//     erfc(z) = e^{-z^2}/sqrt(pi) * sum_k term_k,
+//     term_0 = 1/|z|,  term_k = term_{k-1} * (-(2k-1))/(2 z^2),
+// evaluated with optimal truncation. The series is DIVERGENT: its terms shrink
+// to ~e^{-z^2} and then grow again, so summing past the smallest term strictly
+// loses accuracy and a relative-eps exit can never be the primary one. Both the
+// eps exit and the k cap are secondary; the smallest-term test below is primary.
+// At FP32 the k cap is also a hard overflow guard — see B5's note in erf().
+//
+// Only the SUM is returned, not erfc: the two callers need different scalings.
+// erf() (B5) sees only |z| in [3.5, 6], where e^{z^2} <= 4.3e15, and divides by
+// it; erfc() (B6) runs out to the FP32 underflow floor |z| ~ 10.05, where e^{z^2}
+// ~ 7.3e43 would first overflow the Dekker splitter (|z| ~ 8.93) and then trip
+// exp()'s hard |arg| >= 88 guard (|z| ~ 9.38) — so erfc() multiplies by e^{-z^2}
+// instead. Keeping the scaling at the call sites lets erf()'s arithmetic stay
+// bit-for-bit what B5 shipped while erfc() gets the overflow-safe form.
+//
+// Preconditions: az = |z| > 0 and z2 = z*z, both finite.
+KOKKOS_INLINE_FUNCTION FloatFloat erfc_asymptotic_sum(FloatFloat az, FloatFloat z2) {
+    const float eps = 1.0e-14f;   // ~ FF relative resolution (2^-46); finer never fires
+    FloatFloat two_z2 = multiply_scalar(z2, 2.0f);
+    FloatFloat term = divide(FloatFloat(1.0f), az), sum = term;
+    float prev_mag = Kokkos::fabs(term.hi);
+    for (int k = 1; k <= 60; ++k) {
+        FloatFloat next = divide(multiply_scalar(term, -(2.0f*k - 1.0f)), two_z2);
+        float mag = Kokkos::fabs(next.hi);
+        if (mag > prev_mag) break;                 // smallest term reached -> stop
+        sum = add(sum, next);
+        term = next; prev_mag = mag;
+        if (mag <= eps * Kokkos::fabs(sum.hi)) break;
+    }
+    return sum;
+}
+
 KOKKOS_INLINE_FUNCTION FloatFloat erf(FloatFloat z) {
     // B5 (FF): repair both erf branches for FP32's narrow exponent range. The DD
     // port (dd_math.hpp:670) computes each Taylor/asymptotic term from a separately
@@ -740,7 +775,6 @@ KOKKOS_INLINE_FUNCTION FloatFloat erf(FloatFloat z) {
     FloatFloat z2 = multiply(z, z);
     int sign = (z.hi >= 0.0f) ? 1 : -1;
     FloatFloat az = abs(z);
-    FloatFloat two_z2 = multiply_scalar(z2, 2.0f);
 
     // Switchover derivation (probe over |z| in [1,6], incremental recurrence):
     // Taylor stays >= FF precision and converges within the iteration cap up to
@@ -753,6 +787,7 @@ KOKKOS_INLINE_FUNCTION FloatFloat erf(FloatFloat z) {
         //   term_0 = |z|,  term_k = term_{k-1} * (2 z^2) / (2k+1).
         // All terms positive; the running ratio keeps each O(<= sum) so no FP32
         // overflow (sum <= (sqrt(pi)/2) e^{z^2}, ~3.8e15 at |z|=6).
+        FloatFloat two_z2 = multiply_scalar(z2, 2.0f);
         FloatFloat term = az, sum = az;
         for (int k = 1; k <= 100; ++k) {
             term = divide_scalar(multiply(term, two_z2), 2.0f*k + 1.0f);
@@ -764,28 +799,133 @@ KOKKOS_INLINE_FUNCTION FloatFloat erf(FloatFloat z) {
                                    multiply(sqrt(FloatFloat_pi()), exp(z2)));
         return (sign > 0) ? result : negate(result);
     } else {
-        // Asymptotic (A&S 7.1.23): erfc(z) = e^{-z^2}/sqrt(pi) * sum_k term_k,
-        //   term_0 = 1/|z|,  term_k = term_{k-1} * (-(2k-1)) / (2 z^2).
-        // This series is divergent; sum only through the smallest term (optimal
-        // truncation) — adding beyond it both loses accuracy and, at FP32, would
-        // eventually overflow. Then erf = 1 - erfc.
-        FloatFloat term = divide(FloatFloat(1.0f), az), sum = term;
-        float prev_mag = Kokkos::fabs(term.hi);
-        for (int k = 1; k <= 60; ++k) {
-            FloatFloat next = divide(multiply_scalar(term, -(2.0f*k - 1.0f)), two_z2);
-            float mag = Kokkos::fabs(next.hi);
-            if (mag > prev_mag) break;                 // smallest term reached -> stop
-            sum = add(sum, next);
-            term = next; prev_mag = mag;
-            if (mag <= eps * Kokkos::fabs(sum.hi)) break;
-        }
+        // Asymptotic (A&S 7.1.23), optimal truncation — see erfc_asymptotic_sum()
+        // above, which B6 factored out of this branch so erfc() can invoke the
+        // identical series directly. The scaling stays here: |z| <= 6 on this
+        // path, so e^{z^2} <= 4.3e15 and the divide is safe (erfc()'s
+        // multiply-by-e^{-z^2} form is the one that has to reach |z| ~ 10). Then
+        // erf = 1 - erfc; erfc is ~7.4e-7 at the |z| = 3.5 seam and smaller above,
+        // so that subtraction is benign for erf (it is NOT for erfc itself — see
+        // erfc() below).
+        FloatFloat sum = erfc_asymptotic_sum(az, z2);
         FloatFloat erfc_val = divide(sum, multiply(sqrt(FloatFloat_pi()), exp(z2)));
         FloatFloat erf_val  = subtract(FloatFloat(1.0f), erfc_val);
         return (sign > 0) ? erf_val : negate(erf_val);
     }
 }
 
+// erfc — direct asymptotic expansion for z >= 5.75, 1 - erf(z) below that.
+//
+// B6: `erfc(z) = subtract(FloatFloat(1.0f), erf(z))` for ALL z is catastrophic
+// cancellation as erf(z) -> 1. erf is accurate to u^2 RELATIVE to 1, so the
+// difference carries an absolute error ~u^2 and erfc's relative error is
+// u^2/erfc(z) — a loss of exactly log10(1/erfc(z)) digits, by construction, at
+// every precision. The FP32 flavour of the DD sibling (B2, dd_math.hpp:erfc).
+//
+// What FF does differently from DD is the TOP of the range. DD's erf saturates
+// at |z| = 8.5, well past where its asymptotic branch (live from 6.0) has pushed
+// erfc's answer into erf's lo word, so DD's shipped erfc degraded to a flat
+// ~16-digit shelf. FF's erf saturates to exactly ±1 at |z| > 6.0, only 2.5 above
+// its own 3.5 switchover, so FF's shipped erfc does not get a shelf — it falls
+// off a CLIFF: measured 7.60 digits at z = 6.00 and exactly 0.00 (erfc returns
+// +0, relative error 1) at every z >= 6.02. That cliff, not a slow ramp, is what
+// pinned the ff_accuracy_test erfc row's min at -0.00.
+//
+// Fix: for z >= kDirectMin, evaluate erfc directly from the SAME asymptotic
+// series erf() uses (erfc_asymptotic_sum, A&S 7.1.23) and never form 1 - erf.
+// Negative z needs no such path: erfc(-|z|) = 2 - erfc(|z|) is ~2, so
+// subtract(1, erf) is benign there and already scores the 14-digit report cap.
+//
+// Threshold derivation. Same rule as B2: the cut goes where the direct series
+// stops being worse than the fallback it replaces at EVERY measured point, not
+// on average. Below the cut the fallback wins outright — the series' optimal-
+// truncation floor is only 4.04 digits at z = 3.0 and 5.46 at z = 3.5, against
+// the fallback's ~8 there. The two curves cross around z ~ 4.0, but the
+// fallback's value is pure roundoff LUCK (its digit count is set by where
+// erfc(z) happens to land in erf's 24-bit lo word), so it scatters: over
+// [5.4, 6.0] its mean is 7.80 while individual points spike to 13.40. The direct
+// series is smooth and climbs ~4 digits per unit z through that scatter band
+// (7.09 at z = 4.0, 11.00 at 5.0, 13.18 at 5.5, then the 14-digit report cap).
+// Enumerating EVERY representable float (not a grid — the fallback's scatter is
+// per-float) over [5.4, 6.001], 1,260,389 inputs, exactly 2 regress, the highest
+// at z = 5.6338043 by 0.106 digit. kDirectMin = 5.75 sits 0.116 above that, and
+// over all 7,235,176 representable floats in [5.7, 10.3] NO input scores worse
+// than the shipped 1 - erf code did.
+//
+// Rejected alternative — kDirectMin = 4.9, which a 0.00005-spaced grid says is
+// clean (1 regressing point in 35,001 over [4.85, 6.6], worth 0.020 digit). It
+// is not: exhaustive float enumeration finds the fallback's lucky spikes that a
+// grid steps over. Grid sampling is the wrong instrument for a function whose
+// error is roundoff-scattered; B2 used a 0.0005 grid because DD's fallback had a
+// genuine 53-bit shelf with a narrow envelope, which FF's 24-bit lo word does
+// not give.
+//
+// The pointwise rule is NOT free here, unlike at DD. B2 could apply it at no
+// cost because DD's row mean was flat to +/-0.03 digit across its whole
+// candidate window. FF's is not: the predicted ff_accuracy_test random-domain
+// mean rises monotonically with a lower cut — 11.84 with no direct path, 11.96
+// at 5.75, 12.26 at 5.0, 12.36 at 4.5-4.0 (the plateau), 12.21 at 3.0. So 5.75
+// leaves ~0.40 digit of mean on the table versus the mean-optimal ~4.0. That is
+// the deliberate trade: 4.0 regresses 814 of 6201 measured points by up to 1.93
+// digits, and a measured regression is not worth 0.40 of a mean that already
+// clears its gate by 3.5.
+//
+// KNOWN LIMITATION, not closed here (inherited verbatim from B2 DEV1). Below
+// the cut the 1 - erf cancellation is a ramp, not a cliff, so it costs digits
+// well under any usable threshold for THIS series. Exhaustive per-float window
+// means against a quadmath oracle: [2, 3] 10.32, [3, 3.2] 8.77, [3.2, 3.5] 8.03,
+// [3.5, 4] 6.26, [4, 4.5] 7.69, [4.5, 5] 7.81, [5, 5.5] 7.81, [5.5, 5.75] 7.81 —
+// i.e. under the 8.45 test gate at scattered points from z ~ 2.94 and at
+// substantially every point from z ~ 3.2 up to kDirectMin. A direct asymptotic
+// path cannot help there: its optimal-truncation floor is 4.04 digits at z = 3.0
+// and 5.46 at z = 3.5, at or below the subtract it would replace. (The global
+// trough, 5.459 digits at z = 3.5, is not cancellation at all — it is erf()'s own
+// Taylor->asymptotic seam, where the two paths return the identical value.)
+// Closing that band needs a different algorithm (a Lentz continued fraction,
+// A&S 7.1.14, or a triple-float erf). The ff_accuracy_test row gates on the MEAN
+// and passes at 11.97 vs 8.45; the pointwise band is a separate, open concern.
 KOKKOS_INLINE_FUNCTION FloatFloat erfc(FloatFloat z) {
+    // See derivation above. Sits below erf()'s own |z| > 6.0 saturation, so the
+    // cliff that saturation creates is never reached through erfc.
+    const float kDirectMin = 5.75f;
+    // Above this, erfc(z) rounds to +0 in FP32 and +0 is the only representable
+    // answer, so honest underflow beats evaluating the series. Derivation:
+    // erfc(z) ~ e^{-z^2}/(z*sqrt(pi)) crosses FLT_TRUE_MIN/2 = 7.0e-46 at
+    // z ~ 10.05 (oracle: erfc(10.04) = 9.3e-46, erfc(10.06) = 6.2e-46), and the
+    // series below independently first returns exactly 0 at z = 10.04. The clamp
+    // also keeps z*z away from the range where the corpus (which feeds erfc
+    // FLT_MAX) would make z2 = +inf and poison the series into NaN, and where
+    // exp() would print its "argument too large" diagnostic.
+    const float kUnderflowMax = 10.05f;
+    if (z.hi >= kDirectMin) {
+        if (!(z.hi <= kUnderflowMax)) return FloatFloat(0.0f);  // also catches +inf/NaN
+        FloatFloat z2 = multiply(z, z);
+        FloatFloat sum = erfc_asymptotic_sum(z, z2);
+        // e^{-z^2}, not 1/e^{z^2}: forming sqrt(pi)*e^{z^2} and dividing by it
+        // fails twice over. (a) The Dekker splitter overflows: multiply()
+        // computes conb = b.hi*8193 with b.hi = e^{z^2}, which passes
+        // FLT_MAX/(8193+1) = 4.15e34 at z = 8.93, giving inf - inf = NaN. This is
+        // B8 / PORT_NOTES §4d, but at multiply()'s splitter, which B8 did NOT
+        // scale — only divide()'s was fixed. (b) Past that, ff exp() hits its
+        // hard |arg| >= 88 guard (FP32's finite range) at z = 9.38 and returns 0
+        // AND prints "FFEXP: argument too large", so the quotient is 1/0.
+        // Measured: the divide form returns NaN for every z >= 8.95 and prints
+        // from z >= 9.38. The multiply form has neither failure and reaches the
+        // underflow floor.
+        FloatFloat emz2;
+        if (z2.hi < 88.0f) {
+            emz2 = exp(negate(z2));
+        } else {
+            // Same |arg| >= 88 guard: quarter the argument (max |z^2/4| = 25.25
+            // at kUnderflowMax) and square twice. Costs ~2 bits of exp's relative
+            // error, which is moot here — every z past 9.38 has e^{-z^2} below
+            // FLT_MIN, so the result is subnormal and losing bits anyway.
+            emz2 = exp(divide_scalar(negate(z2), 4.0f));
+            emz2 = multiply(emz2, emz2);
+            emz2 = multiply(emz2, emz2);
+        }
+        return divide(multiply(sum, emz2), sqrt(FloatFloat_pi()));
+    }
     return subtract(FloatFloat(1.0f), erf(z));
 }
 
