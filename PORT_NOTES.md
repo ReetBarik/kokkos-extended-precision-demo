@@ -347,6 +347,56 @@ fourth.
 
 Cross-ref: TEST_SUITE_PLAN.md §B2 DONE (commit ebed8c7).
 
+### 4i. `erfc` at FP32: the same identity bug, but the shelf ends in a cliff
+
+**Symptom**: FF `erfc` scored exactly 0 digits — returning +0 against a nonzero
+true value — at every z >= 6.02, and ~7.8 digits on a noisy plateau below that.
+
+**Cause**: `erfc(z) = 1 - erf(z)`, the §4h defect, at FP32. What is new is the
+shape. §4h's DD version degrades onto a flat shelf because `erf`'s lo word is a
+53-bit channel that keeps carrying erfc's value right up to DD's |z| = 8.5
+saturation. FF's lo word is a 24-bit channel and FF's `erf` saturates at
+|z| = 6.0, barely above its own 3.5 Taylor->asymptotic switchover. So FF gets a
+short, noisy 24-bit shelf over [3.5, 6.0] (per-float mean 7.80 digits) and then
+a hard cliff to zero — not the long graceful shelf DD showed. The mean-gated
+accuracy row hid this: the cliff sits at the edge of the row's uniform(-6, 6)
+sampling domain, so only the corpus ever reached it.
+
+**Fix**: identical in shape to §4h — call the asymptotic series directly above
+a threshold — with three FP32-specific differences.
+
+1. *The scaling must be `multiply(x, exp(-z^2))`.* Not for §4h's reason. FF
+   `exp` does have a hard `|arg| >= 88` guard, but unlike DD's arbitrary 300 it
+   really is FP32's finite range, so it is not itself the surprise. The
+   surprise is that `divide(sum, multiply(sqrt(pi), exp(z2)))` breaks EARLIER
+   than the guard, at z = 8.93, inside `multiply`'s Dekker splitter — the §4d
+   bug at a site B8 did not scale. B8 fixed `divide`'s splitter only. Any
+   extended-range special function that forms a large FF intermediate and
+   multiplies it is still exposed.
+
+2. *Derive the threshold by exhaustive float enumeration, not on a grid.* The
+   fallback's accuracy at any z is roundoff luck — it depends on where erfc(z)
+   happens to land in erf's 24-bit lo word — so its error curve is scatter, not
+   a band. A 0.00005-spaced grid over [4.85, 6.6] reports the cut is clean at
+   4.9; enumerating all 1.26M representable floats in [5.4, 6.001] finds a
+   regressor at 5.6338043 that the grid stepped over. At FP32 the whole
+   interesting range is only a few million floats — enumerate them.
+
+3. *The pointwise-no-regressions rule costs something here.* At DD it was free
+   (flat mean across the candidate window). At FF the row mean rises
+   monotonically as the cut drops, so honouring the rule at 5.75 gives up ~0.40
+   digit of mean against the mean-optimal ~4.0. Worth stating explicitly so the
+   next person knows the trade was made on purpose.
+
+**Structural floor, not fixable**: `erfc`'s reported MIN stays at -0.00 after
+the fix, for the same reason DD's does (§4h cross-ref). The corpus feeds z =
+10.5, 19.5, 79.5 ... 100.5, where true erfc runs from 7e-50 down to ~1e-4389.
+FP32's smallest subnormal is 1.4e-45. `+0` is the only representable answer and
+the `__float128` oracle scores it as a total loss. Read the far-tail MEAN, or a
+windowed min over the representable range, not the row min.
+
+Cross-ref: TEST_SUITE_PLAN.md §B6 DONE (commit 243c302).
+
 ---
 
 ## 5. What is *not* fixable

@@ -1431,6 +1431,171 @@ screenful each.
 - **Acceptance gate.** `ff_accuracy_test` erfc mean ≥ 8.45; full ctest green; no
   other op regresses.
 - **Scope-out.** erfc path only; cross-reference B5.
+- **STATUS (resolved).** See DONE block below (commit `243c302`). The numbers and
+  line refs above are **pre-fix** and retained as the historical problem
+  statement: erfc mean is now **11.97**, and erfc lives at `ff_math.hpp:887-930`
+  (`kDirectMin` at 890, `kUnderflowMax` at 899), not the cited `738`. Note the
+  **two-stage history** behind the "mean 3.91, min 0.00" figure above: **B5**
+  lifted it 3.91 → **11.85** without touching `erfc()` at all — repairing erf's
+  NaN removed the inherited-NaN half of the root cause named above — and B6 then
+  closed the residual 11.85 → **11.97**. That small row delta understates the
+  fix: the real defect was a **cliff, not the DD sibling's shelf**. FF's `erf`
+  saturates at |z| = 6.0 and its lo word is only 24 bits, so erfc returned
+  literal +0 for every z ≥ 6.02; the 5.24M representable floats in [6.001, 9.0]
+  went from a 0.000 exhaustive mean to **13.201**. The row mean barely moves
+  because `ff_accuracy_test` samples uniform(-6, 6) and hardly reaches the cliff.
+  Also: threshold shipped at **kDirectMin = 5.75** with an upper clamp
+  **kUnderflowMax = 10.05** (above which +0 is the only representable answer);
+  the stub's "same shape as B2" held, but B2's 6.5 did not transfer, and B2's
+  grid-based threshold method actively fails at FP32 — see DEVIATION 2. The
+  residual mid-z pointwise band **was not attacked**, per B2's explicit
+  instruction not to re-scope. See DONE for full detail; `PORT_NOTES.md` §4i.
+
+**B6: FF erfc direct asymptotic expansion for z >= 5.75. (DONE)**
+
+- Executed 2026-08-07. Task commit `243c302`, merge `<fill-in>`.
+- **`third_party/include/ff_math.hpp` (edit, +156/-16).** Factored
+  `erfc_asymptotic_sum(az, z2)` out of erf()'s asymptotic branch
+  (A&S 7.1.23, optimal truncation, returns the raw sum; scaling
+  stays at call sites so erf()'s arithmetic is preserved verbatim,
+  bit-identical over 14M inputs). `erfc()`: for `z >= kDirectMin =
+  5.75`, scale directly by `e^{-z²}/√π` and never form `1 - erf`.
+  For `z > kUnderflowMax = 10.05` return +0 (also catches +inf/NaN
+  via `!(z.hi <= …)`). Below 5.75 falls through to the original
+  `subtract(FloatFloat(1.0f), erf(z))` path; negative z is unchanged
+  (erfc(-|z|) ~ 2, subtract is benign). Mirrors B2 (DD sibling) in
+  shape.
+- **Scaling form: `multiply(sum, e^{-z²})` not `divide(sum, e^{z²})`**.
+  Forced by two FP32 failure sites. (a) `multiply()`'s Dekker splitter
+  overflows: `multiply(sqrt(pi), exp(z2))` computes `conb = b.hi *
+  8193` with `b.hi = e^{z²}`, passing `FLT_MAX/(8193+1) = 4.15e34` at
+  z = 8.93 and giving `inf - inf = NaN`. This is the §4d bug class,
+  but at multiply()'s splitter, which B8 did NOT scale — only
+  divide()'s was fixed. (b) ff `exp()` has a hard `|arg| >= 88` guard
+  (FP32's finite range) at z = 9.38, returns 0 AND prints "FFEXP:
+  argument too large", so the quotient is 1/0. Measured: divide form
+  returns NaN for every z >= 8.95 and prints from z >= 9.38. Multiply
+  form has neither failure. Above z² = 88 the guard is cleared by
+  quartering the argument and squaring twice (max `|z²/4|` = 25.25 at
+  kUnderflowMax); costs ~2 bits of exp's relative error, moot because
+  e^{-z²} is already subnormal past 9.38.
+- **Threshold derivation (kDirectMin = 5.75).** Same rule as B2:
+  place the cut where the direct series stops regressing anything vs
+  the fallback at every measured point. Fallback above z = 3.5 is
+  erf's 24-bit lo-word channel (per-float mean 7.80 digits over
+  [5.4, 6.0], scatter to 13.40). Direct series climbs ~4 digits per
+  unit z through that band. Exhaustive per-float enumeration over
+  [5.4, 6.001] (1,260,389 inputs) finds exactly 2 regressors, highest
+  at z = 5.6338043 by 0.106 digit; kDirectMin = 5.75 sits 0.116 above.
+  Over all 7,235,176 representable floats in [5.7, 10.3] NO input
+  scores worse than shipped. Rejected alternatives: (i) 4.9, which a
+  0.00005-spaced grid says is clean — but exhaustive enumeration finds
+  the fallback's per-float lucky spikes that a grid steps over (see
+  DEV2). (ii) Minimax cut at 4.0-4.5: mean-optimal (12.36 vs 11.97)
+  but regresses 814/6201 measured points by up to 1.93 digits. The
+  no-regressions guarantee is worth ~0.40 digit of mean on a row that
+  clears its gate by +3.52.
+- **Verification.** ff_accuracy_test erfc row: mean 11.85 → 11.97
+  (gate 8.45, +3.52). Row min unchanged at -0.00, corpus-structural
+  (see DEV1). All 49 other rows digit-for-digit identical vs a
+  baseline binary built from main's `ff_math.hpp`. erf row unchanged
+  and bit-identical over 14,081,211 inputs (every representable float
+  in [3.4, 6.1] ± negation, plus a 1e-4 sweep over [-12, 12] and
+  specials). ctest 23/23 PASS. All six demos
+  (`kokkos_ep_demo{,_complex,_ff,_ff_complex,_qf,_qf_complex}`) RC 0.
+  Zero new `ff_math.hpp` warnings under `-O3 -Wall -Wextra`.
+
+  Exhaustive per-float far-tail lift (quadmath oracle):
+
+     window            floats      pre min / mean     post min / mean
+     [5.75,  6.001]    526,386     -0.00 /  7.784     12.539 / 13.502
+     [6.001, 9.0]    5,240,784     -0.00 /  0.000      8.197 / 13.201
+     [9.0,  10.05]   1,101,006     -0.00 /  0.000     -0.00  /  4.711
+     [10.05, 11.0]     996,148     -0.00 /  0.000     -0.00  /  0.000
+
+  Zero NaNs in all four windows. The [6.001, 9.0] window — 5.24M
+  floats scoring literal 0 pre-B6, now averaging 13.20 digits — is
+  the real lift the row mean hides (the row samples uniform(-6, 6)
+  and barely reaches into it).
+
+- **Blast radius.** grep-verified: erfc has no demo consumer and no
+  `ff_complex.hpp` consumer, so only `ff_accuracy_test` (only affected
+  test) is meaningfully touched.
+- **DEVIATION 1 — row min stays -0.00, corpus-structural.** Inherited
+  from B2 verbatim: 14 corpus entries (z = 10.5 ×3, 19.5 ×3, 79.5, 80,
+  85, 88.7, 88.72, 100.5 ×3) have true erfc between 7.0e-50 and
+  ~1e-4389, all below FP32's smallest subnormal 1.4e-45. +0 is the
+  only representable answer while the `__float128` oracle still
+  resolves them. Six OTHER corpus entries did lift: 2π neighbours
+  (6.28318501/48/96) 0 → 13.32/13.32/13.07 digits; 3π neighbours
+  (9.42477703/798/894) 0 → 5.79/5.16/5.65. Read the far-tail mean or a
+  windowed min over the representable range, not the row min.
+- **DEVIATION 2 — grid sampling is the wrong instrument at FP32; the
+  no-regressions rule is not free here.** Two findings, both worth
+  recording as method-lessons for future FP32 threshold work.
+  (i) A 0.00005-spaced grid over [4.85, 6.6] says kDirectMin = 4.9 is
+  clean (1 regressing point in 35,001, worth 0.020 digit). It is not:
+  exhaustive per-float enumeration finds the fallback's lucky spikes
+  the grid steps over, and the true highest regressor at z = 5.6338043
+  is 5.3× worse than the grid's worst. B2's 0.0005 grid was adequate
+  for DD because DD's fallback had a genuine 53-bit shelf with a
+  narrow envelope; FF's 24-bit lo word gives scatter, not a band. At
+  FP32 the interesting range is only a few million floats — enumerate
+  them. (ii) B2 could apply the pointwise-no-regressions rule at zero
+  cost because DD's row mean was flat ±0.03 digit across its candidate
+  window. FF's is not: predicted row mean rises monotonically with a
+  lower cut (11.84 with no direct path, 11.96 at 5.75, 12.26 at 5.0,
+  12.36 at 4.5-4.0 plateau, 12.21 at 3.0). So 5.75 leaves ~0.40 digit
+  of mean on the table vs the mean-optimal ~4.0. Trade taken on
+  purpose: no-regressions guarantee stands.
+- **DEVIATION 3 — divide-overflow attribution was wrong; there is a
+  live B8-class site at `multiply()`'s splitter.** The task brief cited
+  divide()'s splitter (PORT_NOTES §4d, which B8 fixed with a scaled
+  splitter). Actual failing site is `multiply()`'s splitter inside
+  `multiply(sqrt(pi), exp(z2))`, which B8 left unscaled. Same 4.15e34
+  threshold, same 8193 splitter, different call site. Conclusion (use
+  multiply-by-e^{-z²}) is unchanged and correct — only the attribution
+  moves. **Backlog item, not fixed here** (multiply()'s splitter is
+  out of B6's Rule-4 scope, and multiply-by-e^{-z²} dodges it on the
+  shipped path). Any future extended-range special function that forms
+  a large FF intermediate and then multiplies is exposed to the same
+  bug at multiply()'s splitter. Worth its own scoped task later.
+- **DEVIATION 4 — kUnderflowMax is 10.05, not the brief's estimated
+  ~10.3.** The brief's `sqrt(ln(1/1.4e-45)) ~ 10.3` omitted the
+  `1/(z·√π)` prefactor and round-to-nearest half-ulp. Measured crossing
+  is 10.05: oracle `erfc(10.04) = 9.3e-46`, `erfc(10.06) = 6.2e-46`,
+  and the series independently first returns exactly 0 at z = 10.04.
+  Both derivations agree at 10.05. Trivial correction.
+- **Scope held — mid-z pointwise trough NOT attacked.** Documented
+  in-source as KNOWN LIMITATION, inherited verbatim from B2 DEV1. On
+  a 0.02 grid, erfc scores under the 8.45 gate at scattered points
+  from z ~ 2.94 and at every point from z ~ 3.2 to kDirectMin. Direct
+  asymptotic cannot help (its optimal-truncation floor is 4.04 digits
+  at z = 3.0, at or below the subtract it would replace). One new
+  in-source finding worth recording: the global trough (5.459 digits
+  at z = 3.5) is NOT cancellation — it is erf's own Taylor→asymptotic
+  seam, where the fallback and the direct series return the identical
+  value. Closing the band needs a Lentz continued fraction (A&S
+  7.1.14) or a triple-float erf.
+- **Rule 4.** `third_party/include/ff_math.hpp` is the only file
+  touched. `ff_complex.hpp`, `dd_math.hpp`, `dd_complex.hpp`,
+  `qf_math.hpp`, `qf_complex.hpp`, and all of `tests/` untouched. No
+  tolerance changed; the 8.45 gate was already encoded in
+  `ff_accuracy_test`'s table.
+- **PORT_NOTES §4i shipped inline this cycle** (see PORT_NOTES.md
+  edit in the same commit). Batched-deferral pattern retired with the
+  consolidation pass (`abeb4c9` + `8b845ed`); subsequent B-task closes
+  ship their §4x inline in the DONE commit.
+- **Backlog after this closes.** All library-side gate defects
+  closed across FF/DD/QF. Remaining: (a) new B8-class site in
+  `multiply()`'s Dekker splitter surfaced by B6 DEV3 — needs its
+  own scoped task; (b) optional stale-branch prune (three merged
+  task branches b5/b7/b8 with remotes gone are safe to
+  `git branch -d`; four long-lived backend branches
+  ddfunKokkos/fffunKokkos/CUDAFP128Kokkos/+1 require explicit ask
+  per USER.md rule).
+- Depends on T1.4 (regression gate), B5 (FF erf asymptotic branch
+  this factors from), B2 (DD sibling and pattern template).
 
 **B7: FF `tgamma` — Lanczos coefficients at FF precision. (DONE)**
 
