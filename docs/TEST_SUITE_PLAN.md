@@ -948,6 +948,123 @@ screenful each.
   other op regresses.
 - **Scope-out.** erfc path only; cross-reference B3 for the shared branch.
 
+**B2: DD erfc direct asymptotic expansion for |z| ≥ 6.5. (DONE)**
+
+- Executed 2026-08-07. Task commit `ebed8c7`, merge `<fill-in>`.
+- **`third_party/include/dd_math.hpp` (edit, +129/-19).** Factored
+  `erfc_asymptotic_sum(az, z2)` out of erf()'s asymptotic branch
+  (A&S 7.1.23, optimal truncation, returns the raw sum; scaling
+  stays at call sites so erf()'s arithmetic is preserved verbatim).
+  `erfc()`: for `z ≥ kDirectMin = 6.5`, scale directly by
+  `e^{-z²}/√π` and never form `1 - erf`. For `z > kUnderflowMax =
+  27.25` return +0 (also catches +inf via `!(z.hi <= …)`). Below
+  6.5 falls through to the original `subtract(1, erf(z))` path;
+  negative z is unchanged (erfc(-|z|) ~ 2, subtract is benign).
+- **Scaling form: `multiply(sum, e^{-z²})` not `divide(sum, e^{z²})`.**
+  Forced by two DDFUN-port limits: (a) `exp` has a hard `|arg| ≥
+  300 → 0/inf` guard (would zero erfc from z = 17.32 up), (b)
+  Dekker splitter overflows for `b.hi > DBL_MAX/(2²⁷+1) ~ 1.3e300`
+  reached at z = 26.29 (would turn divide into NaN). Above z² =
+  300 the same exp guard is cleared by quartering the argument and
+  squaring twice (max `|z²/4|` = 185.7 at kUnderflowMax); costs ~2
+  bits — measured 30.45 digits at z = 20, 29.38 at z = 26.
+- **Threshold derivation (kDirectMin = 6.5).** Uniform(-10, 10)
+  mean is flat ±0.03 digit across [5.6, 6.6] (27.99 down to 27.96)
+  and decides nothing. Cut placed on the pointwise rule instead:
+  where the direct series stops regressing anything vs the
+  fallback it replaces. Fallback above z = 6.0 is B3's lo-word
+  shelf (mean 16.53 digits over [6.3, 8.5], scatter to 19.20); the
+  direct series rises ~5.3 digits per unit z and clears that
+  envelope at z ~ 6.44. 6.5 sits just above; over 6001 grid points
+  on [6, 9] at 0.0005 spacing NO point scores worse than shipped.
+  Rejected alternative kDirectMin = 5.75 (minimax cut): mean-
+  optimal and lifts the composite trough 13.55 → 14.50 digits, but
+  regresses 34/721 grid points over (4, 10] by up to 1.86 digits.
+  Selection rule is "no regressions", so 6.5.
+- **Verification.** dd_accuracy_test erfc row: mean 24.87 → 27.97
+  (gate 25.91, +2.06). Min unchanged at −0.00 (structural: corpus
+  feeds erfc 79.5..100.5 where true erfc is 1e-2747..1e-4389,
+  unrepresentable in any double-based type; the row gates on mean
+  only). All 49 other scored rows digit-for-digit identical vs a
+  baseline binary built from main's `dd_math.hpp`. erf row
+  unchanged 30.67 / 0.94, verified bit-for-bit over 236,014 points
+  (0.0005 grid over [-9, 9], 200k pseudorandom, plus specials).
+  ctest 22/23 → 23/23. All six demos
+  (`kokkos_ep_demo{,_complex,_ff,_ff_complex,_qf,_qf_complex}`)
+  RC 0. Zero `dd_math.hpp` warnings under project flags plus
+  `-O3 -Wall -Wextra`. Specials all checked (±0, ±min subnormal,
+  ±DBL_MIN, ±1, seam neighbours 6.4999/6.5/6.5000001, 8.5,
+  17.3/17.33, 27.25 ± eps, 1e8, 1e150, 1e153, 1e200, ±DBL_MAX,
+  ±inf).
+- **Blast radius.** grep-verified: erfc has no demo consumer and
+  no `dd_complex.hpp` consumer, so only `dd_accuracy_test` and
+  `dd_invariant_test` (both green) are affected.
+- **DEVIATION 1 — the defect is wider than the brief states, and
+  this fix by construction cannot close all of it.** Reported, not
+  silently narrowed. Brief characterised post-B3 erfc as "benign
+  for |z| ≤ 5.25, ~16 digits over [5.25, 8.5], hard 0 above 8.5";
+  measured, the first clause is too generous — the loss is
+  `log10(1/erfc(z))` and starts at z ~ 1 (erfc is 22.95 digits at
+  z = 4, 18.39 at z = 5). On a 0.02 grid, scattered points fall
+  under the 25.91 gate from z = 2.90, and EVERY point is under it
+  from z = 3.68 through z = 7.70. The prescribed fix (direct
+  asymptotic above a threshold) provably cannot reach that band:
+  the asymptotic expansion's optimal-truncation floor is worth
+  only ~11 digits at z = 5, worse than the subtract it would
+  replace. Closing that band needs a different algorithm — a
+  Lentz continued fraction (A&S 7.1.14) or a triple-double erf —
+  which is a larger change than this task scopes. The row now
+  PASSES on the mean (the gate `dd_accuracy_test` actually
+  encodes) with +2.06 digits of margin, and every point that was
+  reachable by the prescribed fix is fixed. The composite trough
+  remains 13.55 digits at z = 5.915 — pre-existing `1 - erf`
+  behaviour, left exactly as it was, NOT introduced here. Flagged
+  so future B6 (FF erfc quality-lift) doesn't get re-scoped to
+  try to close it either.
+- **DEVIATION 2 — threshold 6.5, not the stub's "~0.5-1; Boost
+  uses |z| > 0.5".** Boost's 0.5 cut selects a rational minimax
+  approximation, a different algorithm with no accuracy floor
+  tied to z. This series' floor is ~`e^{-z²}`; at z = 0.5 it is
+  worth under 1 digit. The stub number doesn't transfer to the
+  algorithm the stub (and this task) prescribes. Full derivation
+  above.
+- **DEVIATION 3 — erf() was touched, under the brief's explicit
+  sanction, and is verified bit-identical.** The brief allows
+  "optionally factors a shared static helper … your judgment
+  call". Taken: duplicating a 12-line divergent series with hand-
+  tuned truncation in two functions is the drift pattern that
+  produced this bug family. Extraction is pure — erf()'s scaling
+  expression (`divide by sqrt(pi)*exp(z2)`) is left verbatim at
+  the call site rather than moved into the helper, precisely so
+  erf's arithmetic is unchanged. Verified over 236,014 points,
+  every hi and lo word identical to main.
+- **Rule 4.** `third_party/include/dd_math.hpp` is the only file
+  touched. `dd_complex.hpp`, `ff_math.hpp`, `ff_complex.hpp`,
+  `qf_math.hpp`, `qf_complex.hpp`, and all of `tests/` untouched.
+  No tolerance changed; the 25.91 gate was already encoded in
+  `dd_accuracy_test`'s table.
+- **PORT_NOTES draft — sixth deferred companion** (joining
+  B7 f-suffix, B8 divide-splitter, B5 t2/t3 growth, B1 DD-Lanczos,
+  B3 erf truncated series §4c for the eventual batch consolidation
+  pass). Draft body: §4d "erfc: when the identity is the bug" —
+  covers the `1 - erf` catastrophic-cancellation trap
+  (log10(1/erfc(z)) digit loss by construction at every
+  precision), the lo-word-shelf ceiling B3 hit, the direct-
+  asymptotic fix, and the cross-format note on DDFUN-port limits
+  (`|arg| ≥ 300` exp guard + Dekker splitter overflow at
+  DBL_MAX/(2²⁷+1)) that surface only once output range extends
+  past ~1e-130. General lesson: when a special function is
+  defined as an identity over another one (`1 - erf`, `1 - cos`,
+  `log(1 + x)`, `exp(x) - 1`), check the identity's conditioning
+  before tuning the callee. `PORT_NOTES.md` NOT extended inline.
+- **Backlog after this closes.** ctest fully GREEN across FF, DD,
+  QF. Remaining: B6 (FF erfc quality-lift — inherits DEV1's
+  pointwise-band limitation, do not re-scope), PORT_NOTES
+  consolidation pass (six batched drafts), optional stale-branch
+  prune. Reet's next call.
+- Depends on T1.4 (regression gate), B3 (erf asymptotic branch
+  this factors from).
+
 **B3: `erf` — asymptotic branch for |z| > ~8.**
 
 - **Read first:** `dd_math.hpp:669-716` (erf, both branches);
