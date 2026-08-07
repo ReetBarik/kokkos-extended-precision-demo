@@ -1453,7 +1453,7 @@ screenful each.
 
 **B6: FF erfc direct asymptotic expansion for z >= 5.75. (DONE)**
 
-- Executed 2026-08-07. Task commit `243c302`, merge `<fill-in>`.
+- Executed 2026-08-07. Task commit `243c302`, merge `8e162cc`.
 - **`third_party/include/ff_math.hpp` (edit, +156/-16).** Factored
   `erfc_asymptotic_sum(az, z2)` out of erf()'s asymptotic branch
   (A&S 7.1.23, optimal truncation, returns the raw sum; scaling
