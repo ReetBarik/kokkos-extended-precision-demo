@@ -1836,7 +1836,7 @@ screenful each.
 
 **B9: FF Dekker-splitter guard for multiply() and siblings. (DONE)**
 
-- Executed 2026-08-07. Task commit `1767cf9`, merge `<fill-in>`.
+- Executed 2026-08-07. Task commit `1767cf9`, merge `191bfff`.
 - **Origin.** Surfaced by B6 (commit `243c302`) as DEV3: after B8 scaled
   divide()'s Dekker splitter, multiply() and its siblings still had the same
   overflow at 4.15e34. B6 dodged the exposure in its shipped path by rewriting
