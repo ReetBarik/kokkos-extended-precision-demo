@@ -10,7 +10,8 @@
 //
 // FP32-specific modifications (input narrowing, splitter constant
 // 8193.0f = 2^13+1, joint sin/cos doublings, Taylor branches for
-// |a|<0.5 in sinh/cosh/atanh, direct exp scaling to avoid splitter
+// |a|<0.5 in sinh/cosh/atanh, direct exp scaling and scaled-splitter
+// guards at the multiply/divide primitives to avoid splitter
 // overflow, nint magic-constant replacement) are documented in
 // PORT_NOTES.md. These modifications fall under DHB-License §3
 // (grant-back) and are governed by the same terms as the original.
@@ -192,6 +193,39 @@ KOKKOS_INLINE_FUNCTION FloatFloat subtract(FloatFloat a, FloatFloat b) {
 // TwoProduct (Dekker splitting). Splitter = 2^13 + 1 for FP32 (24-bit mantissa).
 KOKKOS_INLINE_FUNCTION FloatFloat multiply(FloatFloat a, FloatFloat b) {
     const float split = 8193.0f;
+    // B9: scaled splitter — the same overflow B8 fixed in divide() below, at a
+    // third site (see divide()'s comment for the full derivation). BOTH operands
+    // are split here, so both need the guard: for |x.hi| > FLT_MAX / (split + 1)
+    // ≈ 4.15e34 the product x.hi * split overflows to ±inf, and then
+    // x1 = conx - (conx - x.hi) = inf - inf = NaN poisons the whole result.
+    // Surfaced by B6: erfc's multiply(sqrt(pi), exp(z^2)) walks into it at
+    // z ≈ 8.93 (PORT_NOTES §4i). B6 dodged the exposure by reformulating; this
+    // closes it at the primitive.
+    //
+    // Unscale by MULTIPLYING by 2^64 per scaled operand, applied SEPARATELY —
+    // never by 1/(sa*sb). When both operands are scaled, sa*sb = 2^-128 is
+    // subnormal and 1/(sa*sb) overflows to +inf, which would replace one garbage
+    // answer with another. Two exact power-of-two multiplies have no such
+    // intermediate.
+    //
+    // Scope: this fixes products that are REPRESENTABLE but were reached through
+    // a hazard-band operand. It does not change what happens when the product
+    // itself overflows FP32 — multiply() already returned NaN there long before
+    // any splitter scaling (c11 = inf makes a1*b1 - c11 = -inf and then
+    // e = t1 - c11 = NaN), as multiply(1e30, 1e30) shows with both operands well
+    // below the band. Both operands in the band always implies such an overflow
+    // (|a.hi*b.hi| > 1.7e69), so that corner stays non-finite; it lands on
+    // (inf, -inf) rather than NaN, which is neither better nor worse. Fixing
+    // overflow semantics is a separate question from fixing the splitter.
+    const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
+    const bool  ha = Kokkos::fabs(a.hi) > kSplitOverflowThresh;
+    const bool  hb = Kokkos::fabs(b.hi) > kSplitOverflowThresh;
+    const float sa = ha ? ldexpf(1.0f, -64) : 1.0f;
+    const float sb = hb ? ldexpf(1.0f, -64) : 1.0f;
+    const float ua = ha ? ldexpf(1.0f,  64) : 1.0f;
+    const float ub = hb ? ldexpf(1.0f,  64) : 1.0f;
+    a = FloatFloat(a.hi * sa, a.lo * sa);
+    b = FloatFloat(b.hi * sb, b.lo * sb);
     float cona = a.hi * split, conb = b.hi * split;
     float a1 = cona - (cona - a.hi), b1 = conb - (conb - b.hi);
     float a2 = a.hi - a1,            b2 = b.hi - b1;
@@ -203,7 +237,9 @@ KOKKOS_INLINE_FUNCTION FloatFloat multiply(FloatFloat a, FloatFloat b) {
     float t2  = ((c2 - e) + (c11 - (t1 - e))) + c21 + a.lo * b.lo;
     float hi  = t1 + t2;
     float lo  = t2 - (hi - t1);
-    return FloatFloat(hi, lo);
+    // B9: unscale. ua/ub are exact powers of two (or 1.0f on the non-hazard path,
+    // where `hi * 1.0f * 1.0f == hi` bit-for-bit).
+    return FloatFloat(hi * ua * ub, lo * ua * ub);
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
@@ -224,6 +260,18 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
     // |b.hi| ≈ FLT_MAX = 2^128 maps to 2^64, and 2^64 * split ≈ 2^77 ≪ FLT_MAX.
     // Mirrors PORT_NOTES §4a's power-of-2 scaling pattern for exp's final scaling
     // (same bug class, different site — the splitter, not exp's scaling).
+    //
+    // NOT fixed, here or in divide_scalar() — a SECOND, distinct hazard at this
+    // same function (B9 audit; deferred to B10, reported, not silently patched).
+    // The line below also splits the QUOTIENT ESTIMATE s1 = a.hi / b.hi via
+    // `cona = s1 * split`. B8 scaled the divisor only, so |s1| > 4.15e34 still
+    // NaNs: divide(1e35, 1.0f) and divide(1e30, 1e-5f) both return NaN today.
+    // It is not a scaled-splitter one-liner — the numerator has to be scaled
+    // instead, the choice interacts with the divisor scale below, and when the
+    // true quotient genuinely overflows FP32 no scaling recovers a finite answer
+    // (the best available outcome there is ±inf rather than NaN). divide() and
+    // divide_scalar() carry it identically, so it wants one design, not two
+    // ad-hoc patches.
     const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
     const float s = (Kokkos::fabs(b.hi) > kSplitOverflowThresh)
                         ? ldexpf(1.0f, -64) : 1.0f;
@@ -253,6 +301,20 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
 
 KOKKOS_INLINE_FUNCTION FloatFloat multiply_scalar(FloatFloat a, float b) {
     const float split = 8193.0f;
+    // B9: scaled splitter, identical in shape to multiply() above — both a.hi and
+    // the scalar b are split, so both are guarded. Reachable from the public
+    // operator*(FloatFloat, float) / operator*(float, FloatFloat) with either side
+    // in the hazard band; the in-header callers all pass small scalars, but `a`
+    // is unconstrained. Same separate-unscale rule as multiply().
+    const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
+    const bool  ha = Kokkos::fabs(a.hi) > kSplitOverflowThresh;
+    const bool  hb = Kokkos::fabs(b)    > kSplitOverflowThresh;
+    const float sa = ha ? ldexpf(1.0f, -64) : 1.0f;
+    const float sb = hb ? ldexpf(1.0f, -64) : 1.0f;
+    const float ua = ha ? ldexpf(1.0f,  64) : 1.0f;
+    const float ub = hb ? ldexpf(1.0f,  64) : 1.0f;
+    a = FloatFloat(a.hi * sa, a.lo * sa);
+    b = b * sb;
     float cona = a.hi * split, conb = b * split;
     float a1   = cona - (cona - a.hi), b1 = conb - (conb - b);
     float a2   = a.hi - a1,            b2 = b - b1;
@@ -264,11 +326,29 @@ KOKKOS_INLINE_FUNCTION FloatFloat multiply_scalar(FloatFloat a, float b) {
     float t2   = ((c2 - e) + (c11 - (t1 - e))) + c21;
     float hi   = t1 + t2;
     float lo   = t2 - (hi - t1);
-    return FloatFloat(hi, lo);
+    return FloatFloat(hi * ua * ub, lo * ua * ub);   // B9 unscale, see multiply()
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat divide_scalar(FloatFloat a, float b) {
     const float split = 8193.0f;
+    // B9: scaled splitter on the DIVISOR — B8's divide() fix at the scalar site.
+    // For |b| > FLT_MAX / (split + 1) ≈ 4.15e34, conb = b * split overflows and
+    // b1 = inf - inf = NaN. Pre-scale b down by the exact power of two 2^-64, run
+    // the unchanged split, then recover a/b from a/(b·s) by MULTIPLYING the
+    // quotient by s (B8's sign-error warning applies verbatim). Reachable from
+    // the public operator/(FloatFloat, float).
+    //
+    // Scaling b down inflates the quotient estimate t1 = a.hi / b by 2^64, which
+    // cannot itself reach the band: the guard only fires for |b| > 4.15e34, so
+    // |t1| < FLT_MAX / 4.15e34 = 8193 beforehand and < 8193·2^64 ≈ 1.5e23 after —
+    // eleven orders below the 4.15e34 threshold.
+    //
+    // NOT fixed: t1's own splitter hazard when |a.hi / b| > 4.15e34 with a
+    // small b (e.g. divide_scalar(1e35f, 2.0f) → NaN). Same residual defect as
+    // divide() above; deferred to B10 with the reasoning recorded there.
+    const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
+    const float s = (Kokkos::fabs(b) > kSplitOverflowThresh) ? ldexpf(1.0f, -64) : 1.0f;
+    b = b * s;
     float t1   = a.hi / b;
     float cona = t1 * split, conb = b * split;
     float a1   = cona - (cona - t1), b1 = conb - (conb - b);
@@ -281,18 +361,34 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide_scalar(FloatFloat a, float b) {
     float t2   = (t11 + t21) / b;
     float hi   = t1 + t2;
     float lo   = t2 - (hi - t1);
-    return FloatFloat(hi, lo);
+    // B9: unscale — a/b from a/(b·s) by multiplying by s (no-op when s == 1.0f).
+    return FloatFloat(hi * s, lo * s);
 }
 
 // Exact product of two floats
 KOKKOS_INLINE_FUNCTION FloatFloat two_prod(float fa, float fb) {
     const float split = 8193.0f;
+    // B9: scaled splitter, multiply()'s guard at the bare-float site. sqrt() —
+    // the only in-header caller — passes t2 ≈ sqrt(a.hi) ≤ 1.9e19, far below the
+    // band, so this is unreachable from inside the header today. Guarded anyway:
+    // two_prod is a public free function in Kokkos::Experimental, the fix is the
+    // same four lines, and an exactness primitive silently returning NaN is a bad
+    // trap to leave armed. Same separate-unscale rule as multiply().
+    const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
+    const bool  ha = Kokkos::fabs(fa) > kSplitOverflowThresh;
+    const bool  hb = Kokkos::fabs(fb) > kSplitOverflowThresh;
+    const float sa = ha ? ldexpf(1.0f, -64) : 1.0f;
+    const float sb = hb ? ldexpf(1.0f, -64) : 1.0f;
+    const float ua = ha ? ldexpf(1.0f,  64) : 1.0f;
+    const float ub = hb ? ldexpf(1.0f,  64) : 1.0f;
+    fa = fa * sa;
+    fb = fb * sb;
     float cona = fa * split, conb = fb * split;
     float a1   = cona - (cona - fa), b1 = conb - (conb - fb);
     float a2   = fa - a1,            b2 = fb - b1;
     float s1   = fa * fb;
     float s2   = (((a1*b1 - s1) + a1*b2) + a2*b1) + a2*b2;
-    return FloatFloat(s1, s2);
+    return FloatFloat(s1 * ua * ub, s2 * ua * ub);   // B9 unscale, see multiply()
 }
 
 // ============================================================
