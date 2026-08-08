@@ -1936,7 +1936,7 @@ screenful each.
 
 **B10: FF divide() + divide_scalar() quotient-splitter guard. (DONE)**
 
-- Executed 2026-08-08. Task commit `3ca298e`, merge `<fill-in>`.
+- Executed 2026-08-08. Task commit `3ca298e`, merge `febf46b`.
 - **Origin.** Surfaced by B9 (commit `1767cf9`) as DEV1: after B8 scaled
   divide()'s DIVISOR splitter, divide() still had a second unguarded splitter on
   the QUOTIENT ESTIMATE `s1 = a.hi / b.hi`, which could land in the 4.15e34
