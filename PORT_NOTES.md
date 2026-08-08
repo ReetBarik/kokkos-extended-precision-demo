@@ -399,6 +399,55 @@ Cross-ref: TEST_SUITE_PLAN.md §B6 DONE (commit 243c302).
 
 ---
 
+### 4j. `multiply` (and siblings) at FP32: the same overflow B8 didn't reach
+
+**Symptom**: FF `multiply(a, b)` returned NaN whenever `|a.hi|` or `|b.hi|`
+exceeded ~4.15e34, independently of the product's magnitude.
+`multiply(1e35f, 3.7e-6f)` returned `-nan`; `two_prod` in the same hazard band
+went 100% NaN. Latent — no shipped path hit it, because B6 rewrote its own
+exposure out — but a permanent trap for any future extended-range function that
+forms a large FF intermediate and multiplies it.
+
+**Cause**: the §4d bug (Dekker splitter overflow at `FLT_MAX/(split+1) ~ 4.15e34`)
+at three more sites. §4d covered `divide()` only; `multiply()`,
+`multiply_scalar()`, `divide_scalar()`, and `two_prod()` all have identical
+unscaled `b.hi * 8193` steps and all fail the same way.
+
+**Fix**: apply §4d's scaled-splitter pattern to each site. When an operand's
+`|.hi|` is in the hazard band, pre-scale by 2⁻⁶⁴ (exact, so no precision lost),
+run the unchanged Dekker split, then unscale the product by the exact
+compensating factor. Non-overflow paths stay bit-identical (verified at 20M pairs
+per site). Watch the unscale direction: `p = (a·s_a)·(b·s_b) = (a·b)·(s_a·s_b)`,
+so recovering `a·b` means MULTIPLYING p by `1/(s_a·s_b)` — the same sign trap §4d
+flagged for divide.
+
+**No shared helper**: at a hot arithmetic primitive, the 3–4 line inline dance is
+cheaper than a function-call boundary and return-tuple API. Duplication across
+four sites is the right trade; factor if the site count grows.
+
+**A method-lesson worth writing down**: bit-identity sweeps in the FF hazard band
+need rejection sampling on the VALUE, not on the exponent. A uniform draw over
+exponents `≤2¹¹⁴` leaks past a `4.1528e34` threshold — the top exponent bucket
+alone can reach `4.1538e34`. First B9 sweep reported spurious mismatches from
+exactly that. Draw exponents up to the bucket above the threshold, then reject any
+sampled value that lands in-band.
+
+**Codegen artifact worth knowing about**: two separately-compiled binaries A/B'd
+on hazard-band multiply may show ~100 divergences, all quiet-NaN sign bit only.
+This is compiler codegen around IEEE-underspecified NaN payloads, not a semantic
+defect. At `-O0` they match. Divide (unchanged by B9) shows the same pattern for
+the same reason. Compare against a *single-binary* A/B (compiled once, both bodies
+inlined) if you want a semantic answer.
+
+**Related still-open**: `divide()` (and `divide_scalar()`) split their quotient
+estimate `s1 = a.hi/b.hi`, unguarded. `divide(1e35f, 1.0f)` returns NaN with no
+large operand anywhere. §4d fixed the divisor scaling; the quotient scaling is a
+separate design pass. See TEST_SUITE_PLAN.md §B10 (backlog).
+
+Cross-ref: TEST_SUITE_PLAN.md §B9 DONE (commit 1767cf9).
+
+---
+
 ## 5. What is *not* fixable
 
 Not every low-min in the accuracy table is a bug. Some are inherent to the

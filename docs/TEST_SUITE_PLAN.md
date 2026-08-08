@@ -1834,6 +1834,106 @@ screenful each.
   are independent and can be worked in any order relative to the FF set.
 - See `b2cff7d` (branch `b8-ff-divide-splitter-overflow`) for the code diff and this DONE block for the outcome.
 
+**B9: FF Dekker-splitter guard for multiply() and siblings. (DONE)**
+
+- Executed 2026-08-07. Task commit `1767cf9`, merge `<fill-in>`.
+- **Origin.** Surfaced by B6 (commit `243c302`) as DEV3: after B8 scaled
+  divide()'s Dekker splitter, multiply() and its siblings still had the same
+  overflow at 4.15e34. B6 dodged the exposure in its shipped path by rewriting
+  `divide(sum, multiply(sqrt(pi), exp(z²)))` as `multiply(sum, exp(-z²))/sqrt(pi)`,
+  so no shipped path today hits multiply()'s splitter — but the latent trap
+  remained for any future extended-range special function that forms a large FF
+  intermediate and multiplies it. B9 closes it.
+- **`third_party/include/ff_math.hpp` (edit, +101/-5).** Four splitter sites
+  reviewed and guarded (see SIBLING AUDIT below). Fix pattern is B8's verbatim:
+  when an operand's `|.hi|` is in the overflow-hazard band
+  (`> kSplitOverflowThresh = 4.1528233e34f`, the constant B8 already defined at
+  line 227), pre-scale the offending operand(s) by an exact power of two (2⁻⁶⁴,
+  chosen for ~15 orders of headroom — `2⁶⁴ * 8193 ≈ 2⁷⁷ ≪ FLT_MAX`), run the
+  UNCHANGED Dekker split, then unscale the product by the exact compensating
+  factor. Non-overflow paths (all operands safe) are bit-identical to the current
+  code, verified at 20M pairs per site.
+- **SIBLING AUDIT** — all four splitter sites addressed:
+  - **multiply() ~line 194** — FIXED. B6 erfc-shape reachability demonstrated
+    (multiply(1e35f, 3.7e-6f) → -nan pre-B9, bit-exact vs `__float128` post-B9).
+  - **multiply_scalar() ~line 255** — FIXED. Public `operator*`; in-header scalar
+    callers pass small constants but the FF side is unconstrained by caller
+    context.
+  - **divide_scalar() ~line 271** — FIXED, divisor half only. Scaling `b` inflates
+    the intermediate `t1` by 2⁶⁴ but stays 11 orders under the hazard band, so
+    B8's-style divisor scaling suffices. Quotient-scaling gap identical to
+    divide() — see DEV1 below.
+  - **two_prod() ~line 289** — FIXED, though currently unreachable in-header.
+    `sqrt()` is its only caller and passes `≤1.9e19`. Guarded anyway because
+    two_prod is a public exactness primitive on the FF API surface.
+- **Design decision — no shared helper.** The 3–4 line scaled-splitter dance is
+  inline at each of the four sites; duplication is cheaper than a helper's
+  function-call boundary and return-tuple API at a hot arithmetic primitive.
+  Explicitly agreed with FIX SHAPE point 3.
+- **Verification.**
+  - Bit-identity: 20,000,576 pairs per site, single-binary A/B against verbatim
+    pre-B9 bodies — **0 mismatches on all four sites** in the non-overflow domain.
+    Load-bearing acceptance claim; holds.
+  - ff_accuracy_test all 50 rows, min and mean: **zero delta** (largest |Δ|
+    0.0000), statuses identical, both runs ALL PASSED.
+  - Positive test: `multiply(1e35f, 3.7e-6f)` returns `-nan` on main, bit-exact vs
+    `__float128` on B9. two_prod exactness in the hazard band: ~5.7M products go
+    100% NaN → 100% bit-exact.
+  - Full ctest: 23/23 PASS (was 23/23 pre-B9). All six demos
+    (`kokkos_ep_demo{,_complex,_ff,_ff_complex,_qf,_qf_complex}`) RC 0. Zero new
+    `ff_math.hpp` warnings under `-O3 -Wall -Wextra`.
+- **DEVIATION 1 — divide() is only half-fixed; new B10 backlog task.** Discovered
+  mid-work: B8 scaled divide()'s divisor, but divide() also splits the quotient
+  estimate `s1 = a.hi/b.hi`, which is still unguarded. `divide(1e35f, 1.0f)`
+  returns NaN pre-B9 AND post-B9 — no large operand anywhere, just a large
+  quotient. Not patched here per report-and-stop directive: needs numerator
+  scaling, interacts with B8's existing divisor scale, and an overflowing quotient
+  is unrecoverable regardless. divide_scalar carries the identical gap.
+  **Deferred to B10** as one unified design pass covering both divide() and
+  divide_scalar()'s quotient-scaling exposure. Documented at the divide() site
+  in-source.
+- **DEVIATION 2 — both-operands-in-band corner is unchanged (self-caught,
+  corrected pre-commit).** multiply() already returned NaN for any overflowing
+  product independent of the splitter (`multiply(1e30, 1e30)` was NaN on main too
+  — product overflow, not splitter overflow). That corner now returns `(inf, -inf)`
+  instead of NaN. First in-code comment overclaimed this as a fix; corrected
+  before commit. Not a defect, just scope precision — B9 addresses
+  splitter-overflow-inside-a-finite-product, not the pre-existing
+  finite-inputs-overflowing-product case.
+- **DEVIATION 3 — no shared helper**, agreed with FIX SHAPE point 3. (Not really a
+  deviation, restated for the record.)
+- **Prompt-error corrections cluster-Claude flagged:**
+  - The brief called splitter site ~289 the "pow chain"; it is actually
+    `two_prod`. `pow_int` reaches the splitter only via `multiply()`. Corrected in
+    the DONE block above.
+  - Sweep methodology gotcha: a uniform draw over exponents ≤2¹¹⁴ leaks past the
+    4.1528e34 threshold (top bucket reaches 4.1538e34). First bit-identity sweep
+    reported spurious mismatches from exactly that; fixed by rejection-sampling on
+    the value, not the exponent. Method-lesson worth recording in §4j.
+- **Codegen artifact (not a semantic issue).** Two separately-compiled binaries
+  A/B'd showed 44 (multiply, multiply_scalar, two_prod combined) + 109 (divide)
+  divergences, all quiet-NaN sign bit only. Divide showed 109 despite being a
+  comment-only edit, which is the clincher that this is compiler codegen around
+  NaN sign bits, not semantics. At `-O0` everything matches. Recorded for the
+  record; no action.
+- **Header comment lines 11-15 lightly updated** to name the scaled-splitter
+  guards, per the brief's judgment-call sanction.
+- **tests/ff_eft_test.cpp:16, 127 cite drifted line numbers** (comments only,
+  Rule-4 out of scope, flagged not touched). Fold into next housekeeping pass.
+- **Device-path caveat.** Kokkos install is Serial-only (KOKKOS_ENABLE_CUDA
+  undefined); all verification is host-path. Fix adds no new construct —
+  `ldexpf` / `Kokkos::fabs` already appear in this header from B8 — but the device
+  path is unexercised here, as it was for B8.
+- **Rule 4.** `third_party/include/ff_math.hpp` is the only file touched.
+  `ff_complex.hpp`, `dd_math.hpp`, `dd_complex.hpp`, `qf_math.hpp`,
+  `qf_complex.hpp`, and all of `tests/` untouched. No tolerance changed; no
+  accuracy gate touched.
+- **Backlog after this closes.** (a) **B10** — divide() and divide_scalar()
+  quotient-scaling gap (DEV1), one unified design pass. (b) Optional housekeeping:
+  ff_eft_test.cpp line-ref drift.
+- Depends on B8 (divide splitter scaled), B6 (surfaced DEV3), B2
+  (identity-is-the-bug lens).
+
 ### Phase 2 — FF validation (6 tasks)
 
 FF library is already implemented on `fffunKokkos`. Phase 2 = validate
