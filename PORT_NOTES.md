@@ -446,6 +446,69 @@ separate design pass. See TEST_SUITE_PLAN.md §B10 (backlog).
 
 Cross-ref: TEST_SUITE_PLAN.md §B9 DONE (commit 1767cf9).
 
+### 4k. `divide`'s quotient splitter: the second half of §4d, plus a semantic upgrade for the unreachable half
+
+**Symptom**: FF `divide(a, b)` returned NaN whenever the quotient estimate
+`s1 = a.hi / b.hi` exceeded ~4.15e34, even when both operands were far below the
+hazard band — `divide(1e35f, 1.0f)` and `divide(1e30f, 1e-5f)` both went NaN with
+no large input anywhere. `divide_scalar` carried the identical defect.
+
+**Cause**: the §4d bug at divide()'s SECOND splitter. §4d fixed `divide()`'s
+divisor splitter (`conb = b.hi * split` overflowing when `|b.hi|` exceeded
+~4.15e34). But divide's body runs the splitter TWICE — the second call splits the
+quotient estimate `s1 = a.hi / b.hi` via `cona = s1 * split`. `|s1|` can land in
+the same hazard band with both operands safely below it, and §4d left this site
+unguarded.
+
+**Fix**: three-zone classification on `s1`.
+- Zone A (`|s1|` safe): untouched, bit-identical to §4d.
+- Zone B (`|s1|` in the band but finite): pre-scale the NUMERATOR down by `2^-32`,
+  run the unchanged body, unscale the quotient by `2^32`. Was NaN; now correct to
+  FF precision.
+- Zone C (`|s1| == ∞`, i.e. true quotient exceeds FLT_MAX): return
+  correctly-signed ±inf instead of NaN. This is a deliberate SEMANTIC upgrade, not
+  a bit-identical fix — IEEE-conforming overflow signalling in place of a NaN
+  poison.
+
+**Three FF-specific details worth writing down.**
+
+1. *Scale the numerator, not the divisor, and NOT to §4d/§4j's 2^-64.* The divisor
+   is §4d's territory; s1 is what has to shrink, so the scale lands on the
+   numerator. But numerators in Zone B can be as small as
+   `|b.hi| · 4.15e34 ≈ 2^-34` (b.hi subnormal), so aggressive scaling would flush
+   `a.lo` subnormal. 2^-32 keeps ~19 binades of splitter headroom AND ~36 binades
+   of underflow margin (`a.lo ≥ 2^-90` in the worst corner). 2^-64 would give 51
+   binades of splitter headroom but under 4 of underflow — under-margined for the
+   numerator site.
+
+2. *Classify on `s1` directly; IEEE division makes it safe.* No `|a.hi|` vs
+   `|b.hi| * thresh` product is needed. IEEE division never traps, produces
+   correctly-signed ±inf exactly when the quotient exceeds FLT_MAX, and yields NaN
+   only for 0/0 and inf/inf. Both of those fail `fabs(s1) > thresh` and fall
+   through to the unchanged body (which produced NaN for them before and still
+   does), so classification-on-s1 is both simpler and correct.
+
+3. *§4d's divisor guard and this quotient guard are mutually exclusive in
+   practice.* §4d fires only for `|b.hi| > 4.15e34`, which mathematically forces
+   `|a.hi/b.hi| ≤ split+1 = 8194`, so after §4d's `2^-64` scale `|s1| ≤ 1.5e23` —
+   eleven orders below the threshold. The two guards cannot fire together, so no
+   scale-composition math is needed. Belt-and-braces: write the unscale as two
+   independent exact factors anyway.
+
+**Scope surprise, positive**: this fix reaches wider than the splitter it was
+scoped to close. In Zone B, when `|a.hi|` is within a rounding step of FLT_MAX,
+the overflow site is the Dekker term `a1*b1`, not `cona`. 62 such cases appeared
+in verification, all NaN before, all correct now. The numerator pre-scaling
+shrinks the whole Dekker chain uniformly, so downstream terms get the same
+protection the splitter does — free.
+
+**Related backlog**: `divide(1.0f, inf)` returns NaN where IEEE says +0. That is a
+§4d-territory question (the divisor guard evaluates `conb = inf * split = inf`,
+poisoning the split before the quotient path is reached), not §4k. Left for a
+future §4d extension.
+
+Cross-ref: TEST_SUITE_PLAN.md §B10 DONE (commit 3ca298e).
+
 ---
 
 ## 5. What is *not* fixable

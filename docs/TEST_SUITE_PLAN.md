@@ -1934,6 +1934,133 @@ screenful each.
 - Depends on B8 (divide splitter scaled), B6 (surfaced DEV3), B2
   (identity-is-the-bug lens).
 
+**B10: FF divide() + divide_scalar() quotient-splitter guard. (DONE)**
+
+- Executed 2026-08-08. Task commit `3ca298e`, merge `<fill-in>`.
+- **Origin.** Surfaced by B9 (commit `1767cf9`) as DEV1: after B8 scaled
+  divide()'s DIVISOR splitter, divide() still had a second unguarded splitter on
+  the QUOTIENT ESTIMATE `s1 = a.hi / b.hi`, which could land in the 4.15e34
+  hazard band with BOTH operands far below it. `divide(1e35f, 1.0f)` returned NaN
+  with no large operand anywhere. divide_scalar carried the identical gap. B9
+  deferred rather than widening; B10 closes both sites in one unified design pass.
+- **`third_party/include/ff_math.hpp` (edit, +83/-21, 18 code lines).** Three-zone
+  classification on `s1` (the quotient estimate), applied identically at divide()
+  and divide_scalar():
+  - **Zone A** — `|s1| ≤ kSplitOverflowThresh`. Safe. Untouched, bit-identical to
+    pre-B10 (verified at 20M pairs).
+  - **Zone B** — `kSplitOverflowThresh < |s1| < ∞`. Splitter would overflow but
+    the true quotient IS representable. Pre-scale the NUMERATOR down by `2^-32`,
+    run the unchanged body, unscale the quotient by `2^32`. Was NaN; now correct.
+  - **Zone C** — `|s1| == ∞`. True quotient overflows FP32; no scaling recovers a
+    finite answer. Return correctly-signed ±inf instead of NaN. Deliberate
+    SEMANTIC upgrade (honest overflow signal instead of NaN poison), NOT a
+    bit-identical fix — unlike B8/B9, B10 cannot promise "correct everywhere in
+    the band" because part of the band has no representable answer at all.
+- **Design decisions worth noting explicitly:**
+  - **Scale factor 2^-32 (not B8/B9's 2^-64).** B8/B9's scale lands on operands
+    that are huge by definition; B10's lands on the NUMERATOR, which in Zone B can
+    be as small as `|b.hi| · 4.15e34 ≈ 2^-34` (b.hi subnormal). 2^-32 keeps ~19
+    binades of splitter headroom AND ~36 binades of underflow margin
+    (a.lo ≥ 2^-90 in the worst corner, clear of 2^-126). 2^-64 would give 51
+    binades of splitter headroom but under 4 of underflow — would flush a.lo
+    subnormal.
+  - **Scale the NUMERATOR, not the divisor.** The divisor is B8's site; `s1` is
+    what has to shrink. Multiplying `a` by an exact power of two scales s1, every
+    Dekker intermediate, and the final (hi, lo) by exactly that factor. Recovery
+    via two independent exact factors (`s` and `1/sn`), never as one reciprocal —
+    same sign trap B8/B9 flagged.
+  - **Zone classification on `s1` itself is overflow-safe by construction.** IEEE
+    division never traps, delivers correctly-signed ±inf exactly when the quotient
+    exceeds FLT_MAX, and yields NaN only for 0/0 and inf/inf — both of which fail
+    `fabs(s1) > thresh` and fall through to the unchanged body (where they
+    produced NaN before and still do). No `|a.hi|` vs `|b.hi| * thresh` product is
+    needed.
+  - **B8 and B10 guards are mutually exclusive** (see DEV3). B8 firing forces
+    `|a.hi/b.hi| ≤ split+1 = 8194`, so post-B8-scale `|s1| ≤ 1.5e23`, eleven
+    orders below the B10 threshold. B10 can never fire on top of B8. Unscale is
+    still written as two independent factors so it would compose correctly if that
+    ever changed.
+  - **No shared helper across the two sites** (per B9's rule established for the
+    multiply family). Duplication is cheaper than the abstraction at a hot
+    arithmetic primitive.
+- **Verification.**
+  - Zone A bit-identical: 20,000,000 pairs at each site, single-binary A/B vs
+    verbatim pre-B10 bodies. Rejection-sampled on the RATIO value per B9's
+    grid-vs-value lesson (3,444,127 draws rejected). Plus 7,020,506 sliver cases
+    where pre-B10 was finite. **0 mismatches at both sites.**
+  - Zone B correctness: `divide(1e35f, 1.0f)` and `divide_scalar(1e35f, 2.0f)`
+    bit-exact vs `__float128`; `divide(1e30f, 1e-5f)` 16.81 digits. All three were
+    NaN pre-B10.
+  - Zone C: 8 cases (4 sign combos × 2 sites) return correctly-signed ±inf, 0 NaN.
+  - B8-interaction check: `divide(1e37f, 1e35f)` returns 15.28 digits,
+    bit-identical to pre-B10 (confirms DEV3 — guards do not compose in practice).
+  - ff_accuracy_test all 50 rows: **49 byte-identical**. The divide row's printed
+    MIN moves 0.00 → -0.00; mean, n, skipped, tolerance, status all unchanged
+    (14.00 / 1000063 / 4 / 8.45 / PASS). This is a **sort-tie-break artifact, not
+    a numeric change** — see KNOWN QUIRK below.
+  - Full ctest: 23/23 PASS (was 23/23 pre-B10). All six demos
+    (`kokkos_ep_demo{,_complex,_ff,_ff_complex,_qf,_qf_complex}`) RC 0. Zero new
+    `ff_math.hpp` warnings under `-O3 -Wall -Wextra`.
+  - Downstream log() sweep: byte-identical pre/post at `-O0` across
+    x ∈ {1e-30 … 3.4e38} including B8's motivating x ≳ e^79.7 case. Single -O3
+    delta is a NaN sign bit at x = 3.4e38 (the §4j codegen artifact, confirmed by
+    `-O0` agreement). 200k-point sweep: mean 14.86, min 10.11, 0 non-finite.
+- **KNOWN QUIRK, non-numeric.** The divide row's printed MIN moving 0.00 → -0.00
+  is not a regression, and future diffs of ff_accuracy_test should not treat it as
+  one. `compute_stats` does `std::sort + v.front()`; +0 and -0 compare equal, so
+  which zero surfaces depends on the multiset. Per-element scoring of the
+  huge_tiny corpus pairs shows why the multiset changed:
+
+      a, b              ratio        pre         post
+      1.5e18, 1.5e-18   1e36 (B)     NaN, 0.00   finite, 14.00  ← LIFT
+      1.5e24, 1.5e-24   1e48 (C)     NaN, 0.00   +inf,   0.00
+      1.5e30, 1.5e-30   1e60 (C)     NaN, 0.00   +inf,   0.00
+
+  Improved 1, worse 0, unchanged 9. The `+0.0` count dropped 5→4, and the
+  tie-break landed on a pre-existing `-0.0`. The Zone B pair lifted; the Zone C
+  pairs correctly took the ±inf-overflow path and still score 0 digits (as they
+  must — the true quotient is unrepresentable in FP32). One corpus element in
+  1,000,063 lifting is too small to move the printed mean.
+- **DEVIATION 1 — Zone B scale is 2^-32, not the brief's suggested B8/B9-analogous
+  2^-64.** Rationale above under Design decisions. Documented in-source.
+- **DEVIATION 3 — B8 and B10 guards are mutually exclusive; the brief's
+  "composition scenario" cannot occur.** Rationale above. The brief's FIX SHAPE
+  point 5 assumed the two could fire together and required working out the
+  combined scale; in practice they can't, so no composition math is needed.
+  Cluster-Claude wrote the unscale as two independent factors anyway
+  (belt-and-braces). Documented in-source.
+- **DEVIATION 4 — Zone C incidentally makes 1/0, inf/1, 1/FLT_MIN, 1/denorm_min
+  IEEE-correct** (return ±inf where pre-B10 returned NaN). 0/0 and inf/inf
+  correctly stay NaN. Not aimed at, no test gate, just a consequence of returning
+  correctly-signed ±inf whenever `|s1| == inf`.
+- **DEVIATION 6 — B10 reaches WIDER than the splitter it was scoped to fix.** In
+  Zone B, when `|a.hi|` is within a rounding step of FLT_MAX, it is the Dekker
+  term `a1*b1` that overflows — not `cona`. 62 such cases appeared in the sliver
+  sweep, all NaN before, all correct now. Discovered because cluster-Claude's
+  first sliver pass produced 18 apparent mismatches; investigated instead of
+  dismissed. This means B10 quietly closes a superset of the reported gap;
+  positive scope surprise, no defect. Documented at the site.
+- **DEVIATION 8 — device path unexercised.** Kokkos install is Serial-only;
+  `Kokkos::isinf` is device-callable by inspection but not by test. Same caveat as
+  B6/B8/B9.
+- **NEW BACKLOG ITEM, found not fixed** — `divide(1.0f, inf)` returns NaN where
+  IEEE says +0. Root cause is B8's divisor guard (`conb = inf*split = inf`), NOT
+  B10's territory — §4d/§B8 direct extension. Correctly declined to widen B10 to
+  fix a divisor-side issue; recorded here as follow-up work. Not urgent — no
+  shipped path today hits `divide(x, inf)`.
+- **Rule 4.** `third_party/include/ff_math.hpp` is the only file touched.
+  `ff_complex.hpp`, `dd_math.hpp`, `dd_complex.hpp`, `qf_math.hpp`,
+  `qf_complex.hpp`, and all of `tests/` untouched. No tolerance changed; no
+  accuracy gate touched.
+- **Backlog after this closes.** (a) `divide(x, inf)` IEEE-correctness (see above;
+  §4d/§B8 territory). (b) Optional housekeeping: `tests/ff_eft_test.cpp:16, 127`
+  cite drifted line numbers, comments only, Rule-4 out of scope but folds into any
+  future housekeeping pass.
+- Depends on B8 (divisor splitter scaled — mutually-exclusive guard, referenced),
+  B9 (surfaced DEV1, established the no-shared-helper rule and the
+  rejection-sampling method lesson), B6 (identity-is-the-bug lens; established
+  inline §4x shipping post-consolidation).
+
 ### Phase 2 — FF validation (6 tasks)
 
 FF library is already implemented on `fffunKokkos`. Phase 2 = validate
