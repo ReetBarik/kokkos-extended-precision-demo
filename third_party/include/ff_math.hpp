@@ -261,22 +261,66 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
     // Mirrors PORT_NOTES §4a's power-of-2 scaling pattern for exp's final scaling
     // (same bug class, different site — the splitter, not exp's scaling).
     //
-    // NOT fixed, here or in divide_scalar() — a SECOND, distinct hazard at this
-    // same function (B9 audit; deferred to B10, reported, not silently patched).
-    // The line below also splits the QUOTIENT ESTIMATE s1 = a.hi / b.hi via
-    // `cona = s1 * split`. B8 scaled the divisor only, so |s1| > 4.15e34 still
-    // NaNs: divide(1e35, 1.0f) and divide(1e30, 1e-5f) both return NaN today.
-    // It is not a scaled-splitter one-liner — the numerator has to be scaled
-    // instead, the choice interacts with the divisor scale below, and when the
-    // true quotient genuinely overflows FP32 no scaling recovers a finite answer
-    // (the best available outcome there is ±inf rather than NaN). divide() and
-    // divide_scalar() carry it identically, so it wants one design, not two
-    // ad-hoc patches.
+    // B10: the SECOND splitter run in this function splits the QUOTIENT ESTIMATE
+    // s1 = a.hi / b.hi via `cona = s1 * split`, and |s1| can land in the same
+    // 4.15e34 band with BOTH operands far below it — divide(1e35f, 1.0f) and
+    // divide(1e30f, 1e-5f) returned NaN with no large operand anywhere. Three
+    // zones, classified from the actual value of s1:
+    //
+    //   Zone A  |s1| <= kSplitOverflowThresh. Safe; untouched, bit-identical.
+    //   Zone B  kSplitOverflowThresh < |s1| < inf. The splitter overflows but the
+    //           true quotient IS representable. Pre-scale the NUMERATOR down by
+    //           the exact power of two 2^-32, run the unchanged body, unscale the
+    //           quotient by 2^32. Was NaN; now correct.
+    //   Zone C  |s1| == inf. The true quotient overflows FP32, so NO scaling
+    //           recovers a finite answer. Return the correctly-signed ±inf
+    //           instead of NaN.
+    //
+    // Zone C is a deliberate SEMANTIC upgrade (an honest overflow signal instead
+    // of a NaN poison), not a bit-identical fix. Unlike B8 and B9, B10 cannot
+    // promise "correct everywhere in the band", because part of the band has no
+    // representable answer at all. That is inherent to division, not a shortcut.
+    //
+    // Classifying on s1 itself is overflow-safe by construction, which is why no
+    // `|a.hi|` vs `|b.hi| * thresh` product is needed: IEEE division never traps,
+    // delivers a correctly-signed ±inf exactly when the quotient exceeds FLT_MAX,
+    // and yields NaN only for 0/0 and inf/inf — both of which fail
+    // `fabs(s1) > thresh` and fall through to the unchanged body, where they
+    // produced NaN before and still do.
+    //
+    // Why scale the NUMERATOR: the divisor is B8's to scale, and s1 is what has to
+    // shrink. Multiplying `a` by an exact power of two scales s1, every Dekker
+    // intermediate, and the final (hi, lo) by exactly that factor, so the result
+    // is recovered exactly. Watch the direction, as in B8/B9:
+    // q = (a*sn) / (b*s) = (a/b) * (sn/s), so recovering a/b means MULTIPLYING q
+    // by s/sn — applied as two separate exact factors, never as one reciprocal.
+    //
+    // Why 2^-32 rather than B8/B9's 2^-64: this scale lands on the NUMERATOR,
+    // which in Zone B can be as small as |b.hi| * 4.15e34 ~ 2^-34 (b.hi subnormal),
+    // so an over-aggressive scale risks flushing a.lo into the subnormal range.
+    // 2^-32 keeps ~19 binades of splitter headroom (|s1| <= 2^128 maps to 2^96 and
+    // 2^96 * split ~ 2^109 << FLT_MAX) while leaving a.lo >= 2^-90 in that worst
+    // corner, ~36 binades clear of 2^-126. 2^-64 would leave under 4.
+    //
+    // Interaction with B8's divisor scale: the two guards are mutually exclusive.
+    // B8 fires only for |b.hi| > T, which already forces |a.hi/b.hi| <= FLT_MAX/T
+    // = split+1 = 8194; after B8's 2^-64 the estimate is |s1| <= 8194 * 2^64
+    // ~ 1.5e23, eleven orders below T. So B10 can never fire on top of B8. The
+    // unscale is still written as two independent factors so it would compose
+    // correctly if it ever could.
     const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
     const float s = (Kokkos::fabs(b.hi) > kSplitOverflowThresh)
                         ? ldexpf(1.0f, -64) : 1.0f;
     b = FloatFloat(b.hi * s, b.lo * s);
-    float s1   = a.hi / b.hi;
+    float s1 = a.hi / b.hi;
+    float un = 1.0f;                                     // B10 numerator unscale
+    if (Kokkos::fabs(s1) > kSplitOverflowThresh) {       // not Zone A
+        if (Kokkos::isinf(s1)) return FloatFloat(s1, 0.0f);        // Zone C
+        const float sn = ldexpf(1.0f, -32);                        // Zone B
+        un = ldexpf(1.0f, 32);
+        a  = FloatFloat(a.hi * sn, a.lo * sn);
+        s1 = s1 * sn;   // exact, and identical to recomputing (a.hi*sn) / b.hi
+    }
     float cona = s1 * split, conb = b.hi * split;
     float a1   = cona - (cona - s1), b1 = conb - (conb - b.hi);
     float a2   = s1 - a1,            b2 = b.hi - b1;
@@ -294,9 +338,10 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
     float s2   = (t11 + t21) / b.hi;
     float hi   = s1 + s2;
     float lo   = s2 - (hi - s1);
-    // B8: unscale — recover a/b from a/(b·s) by multiplying by s (exact power of 2
-    // when the pre-scale fired; s == 1.0f is a no-op on the non-overflow path).
-    return FloatFloat(hi * s, lo * s);
+    // B8/B10: unscale — recover a/b from (a·un⁻¹)/(b·s) by multiplying by s and by
+    // un, as two separate exact powers of two. Both are 1.0f on the non-hazard
+    // path, where `hi * 1.0f * 1.0f == hi` bit-for-bit.
+    return FloatFloat(hi * s * un, lo * s * un);
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat multiply_scalar(FloatFloat a, float b) {
@@ -343,13 +388,30 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide_scalar(FloatFloat a, float b) {
     // |t1| < FLT_MAX / 4.15e34 = 8193 beforehand and < 8193·2^64 ≈ 1.5e23 after —
     // eleven orders below the 4.15e34 threshold.
     //
-    // NOT fixed: t1's own splitter hazard when |a.hi / b| > 4.15e34 with a
-    // small b (e.g. divide_scalar(1e35f, 2.0f) → NaN). Same residual defect as
-    // divide() above; deferred to B10 with the reasoning recorded there.
+    // B10: the quotient-estimate guard, divide()'s fix at the scalar site. t1 is
+    // this function's `s1` — the estimate that `cona = t1 * split` splits — and it
+    // reaches the hazard band on its own with a perfectly ordinary scalar
+    // (divide_scalar(1e35f, 2.0f) returned NaN). Same three zones, same
+    // classify-on-the-quotient-itself rule, same 2^-32 numerator scale, same
+    // Zone C ±inf-instead-of-NaN semantic upgrade, same mutual exclusivity with
+    // the divisor guard above. The full derivation lives at divide(); it is not
+    // repeated here.
+    //
+    // No shared helper for the two sites: the operand types differ (FloatFloat vs
+    // float divisor) and each guard is five lines inline at a hot arithmetic
+    // primitive — the same trade B9 made across its four splitter sites.
     const float kSplitOverflowThresh = 4.1528233e34f; // FLT_MAX / (split + 1)
     const float s = (Kokkos::fabs(b) > kSplitOverflowThresh) ? ldexpf(1.0f, -64) : 1.0f;
     b = b * s;
-    float t1   = a.hi / b;
+    float t1 = a.hi / b;
+    float un = 1.0f;                                     // B10 numerator unscale
+    if (Kokkos::fabs(t1) > kSplitOverflowThresh) {       // not Zone A
+        if (Kokkos::isinf(t1)) return FloatFloat(t1, 0.0f);        // Zone C
+        const float sn = ldexpf(1.0f, -32);                        // Zone B
+        un = ldexpf(1.0f, 32);
+        a  = FloatFloat(a.hi * sn, a.lo * sn);
+        t1 = t1 * sn;   // exact, and identical to recomputing (a.hi*sn) / b
+    }
     float cona = t1 * split, conb = b * split;
     float a1   = cona - (cona - t1), b1 = conb - (conb - b);
     float a2   = t1 - a1,            b2 = b - b1;
@@ -361,8 +423,8 @@ KOKKOS_INLINE_FUNCTION FloatFloat divide_scalar(FloatFloat a, float b) {
     float t2   = (t11 + t21) / b;
     float hi   = t1 + t2;
     float lo   = t2 - (hi - t1);
-    // B9: unscale — a/b from a/(b·s) by multiplying by s (no-op when s == 1.0f).
-    return FloatFloat(hi * s, lo * s);
+    // B9/B10: unscale — two separate exact powers of two, both 1.0f off-hazard.
+    return FloatFloat(hi * s * un, lo * s * un);
 }
 
 // Exact product of two floats
