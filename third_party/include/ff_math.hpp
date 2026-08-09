@@ -1088,16 +1088,20 @@ KOKKOS_INLINE_FUNCTION FloatFloat erfc(FloatFloat z) {
         FloatFloat z2 = multiply(z, z);
         FloatFloat sum = erfc_asymptotic_sum(z, z2);
         // e^{-z^2}, not 1/e^{z^2}: forming sqrt(pi)*e^{z^2} and dividing by it
-        // fails twice over. (a) The Dekker splitter overflows: multiply()
-        // computes conb = b.hi*8193 with b.hi = e^{z^2}, which passes
-        // FLT_MAX/(8193+1) = 4.15e34 at z = 8.93, giving inf - inf = NaN. This is
-        // B8 / PORT_NOTES §4d, but at multiply()'s splitter, which B8 did NOT
-        // scale — only divide()'s was fixed. (b) Past that, ff exp() hits its
-        // hard |arg| >= 88 guard (FP32's finite range) at z = 9.38 and returns 0
-        // AND prints "FFEXP: argument too large", so the quotient is 1/0.
-        // Measured: the divide form returns NaN for every z >= 8.95 and prints
-        // from z >= 9.38. The multiply form has neither failure and reaches the
-        // underflow floor.
+        // failed twice over when this was written. (a) The Dekker splitter
+        // overflowed: multiply() computes conb = b.hi*8193 with b.hi = e^{z^2},
+        // which passes FLT_MAX/(8193+1) = 4.15e34 at z = 8.93, giving
+        // inf - inf = NaN. That was B8 / PORT_NOTES §4d's bug at multiply()'s
+        // splitter, which B8 did not reach. It is FIXED as of B9 / §4j, which
+        // scaled the splitter at multiply() and its siblings — so (a) no longer
+        // bites, and this sighting is in fact what motivated B9. (b) still
+        // stands on its own, and is sufficient by itself to keep this form: ff
+        // exp() hits its hard |arg| >= 88 guard (FP32's finite range) at
+        // z = 9.38 and returns 0 AND prints "FFEXP: argument too large", so the
+        // quotient is 1/0. Measured pre-B9: the divide form returned NaN for
+        // every z >= 8.95 and printed from z >= 9.38; post-B9 only the printing
+        // and the 1/0 remain. The multiply form has neither failure and reaches
+        // the underflow floor, so it stays.
         FloatFloat emz2;
         if (z2.hi < 88.0f) {
             emz2 = exp(negate(z2));

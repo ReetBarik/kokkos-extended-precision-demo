@@ -63,8 +63,10 @@
 // qd_real.cpp; the table-based QD transcendentals (inv_fact exp, pi/1024 sin/cos
 // tables) are re-expressed in the table-free divide-by-k / joint-doubling style
 // of dd_math.hpp / ff_math.hpp per the T3.0b task + PORT_NOTES §3a — see the
-// block header at the exp/log section for the full source-fidelity note. No
-// qf_complex.hpp (complex QF deferred past T3.0b).
+// block header at the exp/log section for the full source-fidelity note.
+// SCOPE (T3.0c): complex QF lives in qf_complex.hpp (QuadFloatComplex),
+// mirroring ff_complex.hpp / dd_complex.hpp. QD 2.3.24 ships no complex header,
+// so that layer is modeled on this repo's own complex files, not on QD.
 
 #include <Kokkos_Core.hpp>
 #include <cstdint>

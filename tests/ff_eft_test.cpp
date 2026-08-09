@@ -11,10 +11,9 @@
 //   twoProd(a, b) -> (p, e)   with  p = fl(a * b)  and  e = (a * b) - p exactly
 //
 // These two transforms are the atoms of float-float arithmetic. Every FF op in
-// third_party/include/ff_math.hpp is built on the twoSum inside `add`
-// (ff_math.hpp:174-181) and the Dekker twoProduct inside `multiply`
-// (ff_math.hpp:193-207, equivalently the standalone `two_prod`, ff_math.hpp:266-
-// 274). If either EFT is not bit-exact, NOTHING downstream (sqrt/exp/log/sin/…)
+// third_party/include/ff_math.hpp is built on the twoSum inside `add` and the
+// Dekker twoProduct inside `multiply` (equivalently the standalone `two_prod`).
+// If either EFT is not bit-exact, NOTHING downstream (sqrt/exp/log/sin/…)
 // is trustworthy — the whole precision claim rests on these primitives. So this
 // layer tests them in isolation, at the raw-float level, BEFORE any higher-level
 // op is exercised (those are T2.2 invariants / T2.3 properties / T2.4 accuracy).
@@ -63,14 +62,15 @@
 // --------------------------------------------------------------------
 // The T2.1 task prompt repeatedly names the FF splitter "2^12 + 1 = 8193.0f".
 // That is arithmetically inconsistent: 2^12 + 1 = 4097, whereas 8193 = 2^13 + 1.
-// The SHIPPED code uses 8193.0f (ff_math.hpp:194) and its own comment
-// (ff_math.hpp:192) correctly reads "Splitter = 2^13 + 1". This test mirrors the
+// The SHIPPED code uses 8193.0f (the `split` constant in `multiply`) and its own
+// comment there correctly reads "Splitter = 2^13 + 1". This test mirrors the
 // shipped constant 8193.0f and cites it correctly as 2^13 + 1. (Both 4097 and
 // 8193 are in fact valid Veltkamp splitters that yield a bit-exact twoProduct on
 // FP32 — verified empirically — but the transform under test is the one the
 // binary runs, so 8193.0f is used.) A stale copy of the "2^12+1" typo also lives
-// in ff_math.hpp's license header (line 12); flagged in the report, not fixed
-// here (rule 4: this task does not modify ff_math.hpp).
+// in ff_math.hpp's license header (the FP32-specific modifications list);
+// flagged in the report, not fixed here (rule 4: this task does not modify
+// ff_math.hpp).
 //
 // Cross-reference: docs/TEST_SUITE_PLAN.md, Phase 2, "T2.1: EFT unit tests for
 // FF" and "The six test layers" layer 1; PORT_NOTES.md §4a (splitter overflow).
@@ -112,8 +112,8 @@ using namespace kokkos_ep;
 
 struct TwoOut { float hi; float lo; };
 
-// Mirrors the twoSum embedded in Kokkos::Experimental::add (ff_math.hpp:174-181)
-// with a.lo == b.lo == 0. Knuth's twoSum: unconditionally exact for all finite
+// Mirrors the twoSum embedded in Kokkos::Experimental::add, with
+// a.lo == b.lo == 0. Knuth's twoSum: unconditionally exact for all finite
 // FP32 a, b when a + b does not overflow (subnormals included — addition has no
 // underflow hazard).
 KOKKOS_INLINE_FUNCTION TwoOut two_sum(float a, float b) {
@@ -123,14 +123,14 @@ KOKKOS_INLINE_FUNCTION TwoOut two_sum(float a, float b) {
     return TwoOut{ s, err };               // hi = s = fl(a+b), lo = err = exact error
 }
 
-// Mirrors the Dekker twoProduct embedded in Kokkos::Experimental::multiply
-// (ff_math.hpp:193-207), equivalently `two_prod` (ff_math.hpp:266-274), with
+// Mirrors the Dekker twoProduct embedded in Kokkos::Experimental::multiply,
+// equivalently the standalone `two_prod`, with
 // a.lo == b.lo == 0. Splitter 8193.0f = 2^13 + 1. Exact provided no overflow
 // occurs in the splitter (a*split), in a1*b1, or in the product, and no underflow
 // occurs (Dekker 1971; Muller et al., "Handbook of Floating-Point Arithmetic",
 // §4.4 — Veltkamp/Dekker require operands and result in the normal range).
 KOKKOS_INLINE_FUNCTION TwoOut two_prod_dekker(float a, float b) {
-    const float split = 8193.0f;             // 2^13 + 1  (matches ff_math.hpp:194)
+    const float split = 8193.0f;             // 2^13 + 1  (matches `multiply`'s split)
     float cona = a * split, conb = b * split;
     float a1 = cona - (cona - a), b1 = conb - (conb - b);
     float a2 = a - a1,            b2 = b - b1;
@@ -521,7 +521,7 @@ int main(int argc, char** argv) {
     {
         std::printf("=== ff_eft_test (T2.1): EFT bit-exactness for FF twoSum + Dekker twoProd ===\n");
         std::printf("Oracle: FP64 (exact — 25-bit sum / 48-bit product both fit in 53-bit mantissa)\n");
-        std::printf("Splitter: 8193.0f = 2^13 + 1 (mirrors ff_math.hpp:194)\n\n");
+        std::printf("Splitter: 8193.0f = 2^13 + 1 (mirrors ff_math.hpp multiply)\n\n");
 
         // -- Test A: twoSum --------------------------------------------------
         std::printf("[Test A] twoSum bit-exactness\n");
