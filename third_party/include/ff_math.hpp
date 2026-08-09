@@ -243,6 +243,28 @@ KOKKOS_INLINE_FUNCTION FloatFloat multiply(FloatFloat a, FloatFloat b) {
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat divide(FloatFloat a, FloatFloat b) {
+    // §B8 extension: a NON-FINITE DIVISOR must never reach the Dekker splitter.
+    // B8's divisor guard below classifies on |b.hi| > kSplitOverflowThresh, which
+    // is TRUE for b.hi = ±inf, so it scales by 2^-64 — and inf * 2^-64 is still
+    // inf. The splitter then computes conb = inf * split = inf and
+    // b1 = conb - (conb - b.hi) = inf - inf = NaN, poisoning a quotient that IEEE
+    // defines perfectly well: x / ±inf = ±0 for finite x. divide(1.0f, inf)
+    // returned NaN where IEEE 754-2019 §6.1 requires +0.
+    //
+    // The whole answer is the bare float quotient a.hi / b.hi, which is exact for
+    // every non-finite divisor and needs no FF arithmetic at all:
+    //   finite / ±inf  ->  ±0, correctly signed (including ±0 / ±inf, where IEEE
+    //                      preserves the sign of the zero numerator)
+    //   ±inf   / ±inf  ->  NaN (invalid), unchanged
+    //   anything/ NaN  ->  NaN, unchanged
+    // Returning the quotient itself, rather than a copysign(0, ...) form, is what
+    // keeps the inf/inf case NaN — copysign would flatten it to a signed zero.
+    // lo = 0.0f because the result is exact, matching B10's Zone C convention.
+    //
+    // Early return, so this short-circuits ahead of every splitter below by
+    // construction. Divide-by-ZERO is deliberately NOT touched here: b.hi = 0 is
+    // finite, falls through, and keeps B10's Zone C ±inf semantics.
+    if (!Kokkos::isfinite(b.hi)) return FloatFloat(a.hi / b.hi, 0.0f);
     const float split = 8193.0f;
     // B8: the Dekker splitter below computes conb = b.hi * split (line ~"conb =")
     // to extract b.hi's high half. For |b.hi| > FLT_MAX / (split + 1) ≈ 4.15e34
@@ -375,6 +397,12 @@ KOKKOS_INLINE_FUNCTION FloatFloat multiply_scalar(FloatFloat a, float b) {
 }
 
 KOKKOS_INLINE_FUNCTION FloatFloat divide_scalar(FloatFloat a, float b) {
+    // §B8 extension: non-finite divisor, divide()'s guard at the scalar site. The
+    // divisor guard below scales by 2^-64 for |b| > kSplitOverflowThresh, which
+    // b = ±inf satisfies while staying inf, so conb = inf * split = inf and
+    // b1 = inf - inf = NaN. Same bare-quotient answer, same reasoning; the full
+    // derivation lives at divide() and is not repeated here.
+    if (!Kokkos::isfinite(b)) return FloatFloat(a.hi / b, 0.0f);
     const float split = 8193.0f;
     // B9: scaled splitter on the DIVISOR — B8's divide() fix at the scalar site.
     // For |b| > FLT_MAX / (split + 1) ≈ 4.15e34, conb = b * split overflows and

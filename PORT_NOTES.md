@@ -511,6 +511,70 @@ Cross-ref: TEST_SUITE_PLAN.md §B10 DONE (commit 3ca298e).
 
 ---
 
+### 4l. A non-finite divisor never had to reach the splitter at all
+
+**Symptom**: `divide(1.0f, inf)` returned NaN. IEEE 754-2019 §6.1 requires
+`x / ±inf = ±0` for finite `x`, signed by `sign(x) XOR sign(inf)`. Every
+inf-divisor case was wrong the same way — `divide`, `divide_scalar`, and the
+public `operator/` overloads that route through them.
+
+**Cause**: §4d's own guard, firing on an input it was never designed for. The
+divisor guard classifies on `|b.hi| > kSplitOverflowThresh`, which is *true* for
+`b.hi = ±inf`, so it scales the divisor by `2^-64` — and `inf * 2^-64` is still
+`inf`. The unchanged Dekker split then computes `conb = inf * split = inf` and
+`b1 = conb - (conb - b.hi) = inf - inf = NaN`, poisoning the result. Note the
+quotient path itself was already correct: `s1 = a.hi / b.hi` evaluates to the
+right `±0`, and is then discarded by the NaN coming out of the divisor's split.
+This is §4d/§B8 territory (divisor-side), not §4k's quotient-side guard, which is
+why §4k recorded it as backlog rather than widening to catch it.
+
+**Fix**: don't scale a non-finite divisor — short-circuit ahead of it. A single
+precondition at the top of `divide()` and `divide_scalar()`:
+
+```cpp
+if (!Kokkos::isfinite(b.hi)) return FloatFloat(a.hi / b.hi, 0.0f);
+```
+
+The bare float quotient *is* the whole answer for every non-finite divisor, and it
+needs no FF arithmetic: `finite/±inf` gives a correctly-signed zero (including
+`±0/±inf`, where IEEE preserves the numerator's zero sign), `±inf/±inf` gives NaN,
+and a NaN divisor propagates. `lo = 0.0f` because the result is exact — the same
+convention §4k's Zone C uses for its `±inf` returns.
+
+**Return the quotient, not a `copysign` form.** The obvious-looking
+`copysign(0.0f, a.hi / b.hi)` is wrong: it flattens the invalid `inf/inf` case to a
+signed zero instead of leaving it NaN. Dividing and returning the result directly
+gets all four sign combinations *and* the two invalid cases from one IEEE
+operation, with no case analysis to get wrong.
+
+**Divide-by-zero is deliberately NOT in scope.** `b.hi = 0` is finite, falls
+through the guard, and keeps §4k's Zone C behavior (`±inf` for a nonzero
+numerator, NaN for `0/0`). The two questions look adjacent and are not: Zone C is
+about a quotient too large to represent, this is about a divisor that breaks the
+splitter.
+
+**Cost**: nothing below the band. The guard is an early return taken only for
+non-finite `b`, so every finite-divisor pair is bit-identical to pre-§4l —
+verified at 20,000,625 pairs per function across the full finite exponent range
+(Zones A, B and C), zero mismatches.
+
+**Test posture**: `ff_property_test` gained a Group S, an explicit IEEE
+expectation table for `divide`/`divide_scalar` (62 checks). It is a *table*, not a
+computed reference, because the point is to encode what IEEE mandates
+independently rather than recompute the quotient with the primitive under test.
+Group S is the natural home only because nothing else was: Group A's corpus sets
+`include_inf = false`, and `ff_invariant_test` skips non-finite `hi` by
+construction — between them, no FF test had ever pinned down what division does
+with an infinite divisor.
+
+Cross-ref: TEST_SUITE_PLAN.md §B11 DONE — *not yet written*. `docs/` was explicitly
+out of scope for this task branch, so the plan-doc DONE block is left to the merge
+commit, unlike §4j/§4k which shipped theirs alongside. "B11" continues the
+library-fix B-series and is this task's own numbering choice, not one the brief
+assigned; renumber freely if it collides.
+
+---
+
 ## 5. What is *not* fixable
 
 Not every low-min in the accuracy table is a bug. Some are inherent to the

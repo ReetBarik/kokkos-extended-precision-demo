@@ -281,6 +281,93 @@ static GroupAResult run_group_a_binary(const char* name, uint64_t seed,
   return GroupAResult{name, n, skipped, fails};
 }
 
+// ============================================================================
+// GROUP S — IEEE special-value semantics for division (no oracle, no tolerance)
+// ============================================================================
+// Group A sweeps a corpus with inf/nan deliberately OFF (see corpus_flags), and
+// ff_invariant_test SKIPS non-finite hi by construction, so nothing in the FF
+// suite pinned down what divide() returns for a non-finite DIVISOR. It returned
+// NaN for every one of them: B8's divisor guard classifies |b.hi| > thresh, which
+// is true for +/-inf, scales by 2^-64 (inf stays inf), and the Dekker split then
+// evaluates inf - inf = NaN. IEEE 754-2019 §6.1 requires x / +/-inf = +/-0 for
+// finite x. See PORT_NOTES §4l.
+//
+// Written as an explicit expectation TABLE rather than a computed reference: the
+// point is to encode what IEEE mandates independently, not to recompute the
+// quotient with the same primitive under test.
+//
+// The divide-by-ZERO rows are regression guards, not new behavior — that path is
+// B10's Zone C and is deliberately untouched by the §4l fix.
+
+enum class SpecialWant { PosZero, NegZero, NaN, PosInf, NegInf };
+
+static const char* want_name(SpecialWant w) {
+  switch (w) {
+    case SpecialWant::PosZero: return "+0";
+    case SpecialWant::NegZero: return "-0";
+    case SpecialWant::NaN:     return "NaN";
+    case SpecialWant::PosInf:  return "+inf";
+    default:                   return "-inf";
+  }
+}
+
+// Classify an FF result. For a zero/inf expectation the value must be EXACT, so
+// lo is required to be +/-0 as well; for NaN only hi's NaN-ness is checked, since
+// IEEE leaves a NaN's sign and payload unspecified.
+static bool special_matches(ff::FloatFloat got, SpecialWant w) {
+  const bool lo_is_zero = (got.lo == 0.0f);
+  switch (w) {
+    case SpecialWant::PosZero: return got.hi == 0.0f && !std::signbit(got.hi) && lo_is_zero;
+    case SpecialWant::NegZero: return got.hi == 0.0f &&  std::signbit(got.hi) && lo_is_zero;
+    case SpecialWant::NaN:     return std::isnan(got.hi);
+    case SpecialWant::PosInf:  return std::isinf(got.hi) && !std::signbit(got.hi) && lo_is_zero;
+    default:                   return std::isinf(got.hi) &&  std::signbit(got.hi) && lo_is_zero;
+  }
+}
+
+static const char* describe(float v) {
+  static char buf[8][32]; static int slot = 0;
+  char* b = buf[slot = (slot + 1) & 7];
+  if (std::isnan(v))      std::snprintf(b, 32, "NaN");
+  else if (std::isinf(v)) std::snprintf(b, 32, "%cinf", std::signbit(v) ? '-' : '+');
+  else if (v == 0.0f)     std::snprintf(b, 32, "%c0",   std::signbit(v) ? '-' : '+');
+  else                    std::snprintf(b, 32, "%g", (double)v);
+  return b;
+}
+
+struct SpecialCase { float num; float den; SpecialWant want; };
+
+// Returns the number of failures; prints one line per failing case.
+static long run_group_s(const std::vector<SpecialCase>& cases, long& checked) {
+  long fails = 0;
+  for (const auto& c : cases) {
+    const ff::FloatFloat a(c.num);
+    // divide(FF, FF)
+    {
+      ++checked;
+      ff::FloatFloat got = ff::divide(a, ff::FloatFloat(c.den));
+      if (!special_matches(got, c.want)) {
+        ++fails;
+        std::printf("    FAIL divide(%s, %s): want %s, got (%g, %g)\n",
+                    describe(c.num), describe(c.den), want_name(c.want),
+                    (double)got.hi, (double)got.lo);
+      }
+    }
+    // divide_scalar(FF, float) — same expectation, scalar divisor.
+    {
+      ++checked;
+      ff::FloatFloat got = ff::divide_scalar(a, c.den);
+      if (!special_matches(got, c.want)) {
+        ++fails;
+        std::printf("    FAIL divide_scalar(%s, %s): want %s, got (%g, %g)\n",
+                    describe(c.num), describe(c.den), want_name(c.want),
+                    (double)got.hi, (double)got.lo);
+      }
+    }
+  }
+  return fails;
+}
+
 #ifdef KOKKOS_EP_HAVE_QUADMATH
 // ============================================================================
 // GROUP B — approximate identities (tolerance-based, needs the __float128 path)
@@ -449,6 +536,61 @@ int main(int argc, char** argv) {
       }));
 
     for (const auto& r : ga) groupA_failures += r.failures;
+
+    // ------------------------------------------------------------------------
+    // GROUP S — IEEE special-value semantics for division (unconditional).
+    // ------------------------------------------------------------------------
+    std::printf("\n[Group S] IEEE special-value semantics for divide / divide_scalar\n");
+    const float kInf    = std::numeric_limits<float>::infinity();
+    const float kNaN    = std::numeric_limits<float>::quiet_NaN();
+    const float kFltMax = std::numeric_limits<float>::max();
+    const float kFltMin = std::numeric_limits<float>::min();       // smallest normal
+    const float kDenorm = std::numeric_limits<float>::denorm_min();
+
+    const std::vector<SpecialCase> s_cases = {
+      // x / +/-inf = +/-0, sign = sign(x) XOR sign(inf). Was NaN before §4l.
+      { 1.0f,     kInf,  SpecialWant::PosZero},
+      {-1.0f,     kInf,  SpecialWant::NegZero},
+      { 1.0f,    -kInf,  SpecialWant::NegZero},
+      {-1.0f,    -kInf,  SpecialWant::PosZero},
+      // Sign of a ZERO numerator is IEEE-preserved through division by inf.
+      { 0.0f,     kInf,  SpecialWant::PosZero},
+      {-0.0f,     kInf,  SpecialWant::NegZero},
+      { 0.0f,    -kInf,  SpecialWant::NegZero},
+      {-0.0f,    -kInf,  SpecialWant::PosZero},
+      // A spread of finite magnitudes, spanning subnormal to FLT_MAX.
+      { kDenorm,  kInf,  SpecialWant::PosZero},
+      {-kDenorm,  kInf,  SpecialWant::NegZero},
+      { kFltMin,  kInf,  SpecialWant::PosZero},
+      { 1e-30f,   kInf,  SpecialWant::PosZero},
+      { 1.0f,     kInf,  SpecialWant::PosZero},
+      { 1e30f,    kInf,  SpecialWant::PosZero},
+      { 1e35f,    kInf,  SpecialWant::PosZero},   // numerator inside B10's Zone B band
+      { kFltMax,  kInf,  SpecialWant::PosZero},
+      { kFltMax, -kInf,  SpecialWant::NegZero},
+      // inf / inf is invalid — must stay NaN, in all four sign combinations.
+      { kInf,     kInf,  SpecialWant::NaN},
+      { kInf,    -kInf,  SpecialWant::NaN},
+      {-kInf,     kInf,  SpecialWant::NaN},
+      {-kInf,    -kInf,  SpecialWant::NaN},
+      // NaN propagates from either side.
+      { 1.0f,     kNaN,  SpecialWant::NaN},
+      {-1.0f,     kNaN,  SpecialWant::NaN},
+      { 0.0f,     kNaN,  SpecialWant::NaN},
+      { kNaN,     kInf,  SpecialWant::NaN},
+      { kNaN,     kNaN,  SpecialWant::NaN},
+      // Divide-by-zero: B10 Zone C, untouched by §4l. Regression guards.
+      { 1.0f,     0.0f,  SpecialWant::PosInf},
+      {-1.0f,     0.0f,  SpecialWant::NegInf},
+      { 1.0f,    -0.0f,  SpecialWant::NegInf},
+      {-1.0f,    -0.0f,  SpecialWant::PosInf},
+      { 0.0f,     0.0f,  SpecialWant::NaN},
+    };
+
+    long groupS_checked = 0;
+    const long groupS_failures = run_group_s(s_cases, groupS_checked);
+    std::printf("  %-16s n=%-9ld failures=%ld status=%s\n", "S1_div_special",
+                groupS_checked, groupS_failures, groupS_failures == 0 ? "PASS" : "FAIL");
 
 #ifdef KOKKOS_EP_HAVE_QUADMATH
     // ------------------------------------------------------------------------
@@ -769,6 +911,11 @@ int main(int argc, char** argv) {
     std::printf("  Group A: %zu identities, total failures=%ld\n", ga.size(), groupA_failures);
     KOKKOS_EP_ASSERT(groupA_failures == 0,
                      "a Group A bit-exact identity did not hold to the last bit");
+
+    std::printf("  Group S: %ld special-value checks, failures=%ld\n",
+                groupS_checked, groupS_failures);
+    KOKKOS_EP_ASSERT(groupS_failures == 0,
+                     "divide/divide_scalar violated an IEEE special-value requirement");
 
 #ifdef KOKKOS_EP_HAVE_QUADMATH
     long groupB_failed = 0; for (const auto& r : gb) if (!r.pass) ++groupB_failed;
