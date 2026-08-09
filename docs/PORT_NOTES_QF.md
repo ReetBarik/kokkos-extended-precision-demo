@@ -486,6 +486,54 @@ arithmetic; `qf_complex.hpp` inherits the same form through the scalar dispatch.
 real question of *how many digits* QF delivers is orthogonal to this and is settled
 by T3.4, not by the non-overlap gate.
 
+## 17. `divide_scalar` — QF's missing scalar-divide primitive
+
+DD and FF have carried a `divide_scalar(T, scalar)` since the DDFUN port. QF
+did not. Every Taylor loop in `exp`, `expm1`, `sincos`, `sinhcosh`, and `atanh`
+divides by a small loop integer each iteration, and with no scalar form those
+seven call sites promoted the integer to a full `QuadFloat` and paid
+`divide()`'s four-word long division.
+
+Cost of the gap, by static op count (`README.md` Section 2 appendix
+convention): `divide()` is 643 native FP32 ops — four quotient digits, each
+residual corrected by a full `multiply_scalar` (115) plus `subtract` (92). The
+divisor being a single float makes that correction ONE exact product:
+`qf_two_prod` returns it as a non-overlapping `(p, e)` pair, so `(p, e, 0, 0)`
+is a valid QuadFloat and the correction costs 17 + 92 = 109 instead of 207.
+`divide_scalar` therefore lands at 349 ops against 643 — a 46% cut at the
+primitive, and the loops call it once per iteration.
+
+Effect on the transcendentals (static counts, before -> after):
+
+| Op | before | after | cut |
+|---|---|---|---|
+| `exp` | 11754 | 8814 | 25% |
+| `log` | 36463 | 27643 | 24% |
+| `sin` / `cos` | 20044 | 15340 | 23% |
+| `pow` | 48432 | 36672 | 24% |
+| `atan` | 61865 | 49517 | 20% |
+
+Measured wall time agrees and is slightly better than the static count
+predicts, which is expected — the removed work sits on `renorm`'s serial
+`quick_two_sum` dependency chain, where the counts understate the benefit.
+At `--batch 50000 --repeats 1`: `log` 3601 -> 2345 ms (35%), `exp` 1030 -> 756
+ms (27%), `sin` 1649 -> 1257 ms (24%). The full 23-test ctest wall dropped from
+320 s to 254 s.
+
+**This is not a precision/speed trade.** The algorithm is identical to
+`divide()` — same four-digit long division, same closing `renorm` — and the
+residual correction is exact rather than merely faithful, so if anything the
+scalar path is marginally better conditioned. Verified by re-running the full
+39-op QF accuracy sweep at `--batch 1000000 --repeats 5 --seed 12345` before
+and after: all 39 rows (min/max/median/mean) are **bit-identical**. `ctest`
+stays 23/23.
+
+Why QD itself does not show this gap: QD's `qd_real` transcendentals are
+table-based (see §6), so they multiply by a stored `inv_fact[]` entry instead
+of dividing by a loop counter at all. The table-free port adopted in §6 is what
+introduces the division, and DD/FF absorbed it with `divide_scalar` while QF
+was left without one.
+
 ## License lineage (complex layer — T3.0c)
 
 `qf_complex.hpp` carries `LicenseRef-LBNL-BSD-License` — the **same** license as

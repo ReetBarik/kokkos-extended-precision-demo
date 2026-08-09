@@ -88,6 +88,7 @@ KOKKOS_INLINE_FUNCTION QuadFloat subtract(QuadFloat a, QuadFloat b);
 KOKKOS_INLINE_FUNCTION QuadFloat multiply(QuadFloat a, QuadFloat b);
 KOKKOS_INLINE_FUNCTION QuadFloat divide(QuadFloat a, QuadFloat b);
 KOKKOS_INLINE_FUNCTION QuadFloat multiply_scalar(QuadFloat a, float b);
+KOKKOS_INLINE_FUNCTION QuadFloat divide_scalar(QuadFloat a, float b);
 KOKKOS_INLINE_FUNCTION QuadFloat mul_pwr2(QuadFloat a, float b);
 KOKKOS_INLINE_FUNCTION QuadFloat negate(QuadFloat a);
 KOKKOS_INLINE_FUNCTION QuadFloat abs(QuadFloat a);
@@ -629,6 +630,35 @@ KOKKOS_INLINE_FUNCTION QuadFloat divide(QuadFloat a, QuadFloat b) {
     return QuadFloat(q0, q1, q2, q3);
 }
 
+// Long division by a plain FP32 scalar.  Same four-quotient-digit structure as
+// divide() above and the same closing renorm; the only change is the residual
+// correction. When the divisor is a single float, q_i * b is ONE exact product
+// (qf_two_prod gives it as a non-overlapping (p, e) pair, so (p, e, 0, 0) is a
+// valid QuadFloat), where divide() has to run a full four-word multiply_scalar.
+//
+// Motivation: the Taylor loops in exp/expm1/sincos/sinhcosh/atanh divide by a
+// small loop integer on every iteration. Routing that through divide()
+// promotes the integer to a QuadFloat and pays the full four-word division —
+// the dominant cost in every QF transcendental. DD and FF have carried a
+// divide_scalar since the DDFUN port; QF did not, and this closes that gap.
+//
+// Accuracy: identical algorithm to divide(), and the residual correction here
+// is exact rather than merely faithful, so this is not a precision/speed
+// trade. Validated against qf_accuracy_test / qf_property_test.
+KOKKOS_INLINE_FUNCTION QuadFloat divide_scalar(QuadFloat a, float b) {
+    float q0, q1, q2, q3, p, e;
+    QuadFloat r;
+
+    q0 = a.f0 / b;  p = qf_two_prod(q0, b, e);  r = subtract(a, QuadFloat(p, e, 0.0f, 0.0f));
+    q1 = r.f0 / b;  p = qf_two_prod(q1, b, e);  r = subtract(r, QuadFloat(p, e, 0.0f, 0.0f));
+    q2 = r.f0 / b;  p = qf_two_prod(q2, b, e);  r = subtract(r, QuadFloat(p, e, 0.0f, 0.0f));
+
+    q3 = r.f0 / b;
+
+    renorm(q0, q1, q2, q3);
+    return QuadFloat(q0, q1, q2, q3);
+}
+
 // Accurate long division (five quotient digits + length-5 renorm).  Port of
 // qd_real::accurate_div, QD 2.3.24 qd_real.cpp:714-736. Not the default;
 // provided for parity with QD and for tight-bound callers (T3.4).
@@ -826,7 +856,7 @@ KOKKOS_INLINE_FUNCTION QuadFloat exp(QuadFloat a) {
     QuadFloat s2 = QuadFloat(1.0f), s3 = QuadFloat(1.0f);  // s2 = term, s3 = sum
     for (int l1 = 1; l1 <= 60; ++l1) {
         s0 = multiply(s2, s1);
-        s2 = divide(s0, QuadFloat((float)l1));      // term = r^l1 / l1!
+        s2 = divide_scalar(s0, (float)l1);      // term = r^l1 / l1!
         s3 = add(s3, s2);
         if (Kokkos::fabs(s2.f0) <= eps * Kokkos::fabs(s3.f0)) break;
         // NOTE: no return-0 on l1 == 60 (see header comment); fall through with s3.
@@ -896,7 +926,7 @@ KOKKOS_INLINE_FUNCTION QuadFloat expm1(QuadFloat a) {
     }
     QuadFloat sum = a, term = a;
     for (int k = 2; k <= 60; ++k) {
-        term = divide(multiply(term, a), QuadFloat((float)k));
+        term = divide_scalar(multiply(term, a), (float)k);
         sum  = add(sum, term);
         if (Kokkos::fabs(term.f0) < eps * Kokkos::fabs(sum.f0)) break;
     }
@@ -939,9 +969,9 @@ KOKKOS_INLINE_FUNCTION void sincos(QuadFloat a, QuadFloat& sin_a, QuadFloat& cos
     QuadFloat sin_r = r,             cos_r = QuadFloat(1.0f);
     QuadFloat sterm = r,             cterm = QuadFloat(1.0f);
     for (int k = 1; k <= itrmx; ++k) {
-        sterm = divide(multiply(sterm, r2), QuadFloat(-(float)((2*k) * (2*k + 1))));
+        sterm = divide_scalar(multiply(sterm, r2), -(float)((2*k) * (2*k + 1)));
         sin_r = add(sin_r, sterm);
-        cterm = divide(multiply(cterm, r2), QuadFloat(-(float)((2*k - 1) * (2*k))));
+        cterm = divide_scalar(multiply(cterm, r2), -(float)((2*k - 1) * (2*k)));
         cos_r = add(cos_r, cterm);
         if (Kokkos::fabs(sterm.f0) < eps * Kokkos::fabs(sin_r.f0) &&
             Kokkos::fabs(cterm.f0) < eps) break;
@@ -1044,9 +1074,9 @@ KOKKOS_INLINE_FUNCTION void sinhcosh(QuadFloat a, QuadFloat& sinh_a, QuadFloat& 
         QuadFloat sinh_sum = a,             sinh_term = a;
         QuadFloat cosh_sum = QuadFloat(1.0f), cosh_term = QuadFloat(1.0f);
         for (int k = 1; k <= 60; ++k) {
-            sinh_term = divide(multiply(sinh_term, a2), QuadFloat((float)((2*k) * (2*k + 1))));
+            sinh_term = divide_scalar(multiply(sinh_term, a2), (float)((2*k) * (2*k + 1)));
             sinh_sum  = add(sinh_sum, sinh_term);
-            cosh_term = divide(multiply(cosh_term, a2), QuadFloat((float)((2*k - 1) * (2*k))));
+            cosh_term = divide_scalar(multiply(cosh_term, a2), (float)((2*k - 1) * (2*k)));
             cosh_sum  = add(cosh_sum, cosh_term);
             if (Kokkos::fabs(sinh_term.f0) < eps * Kokkos::fabs(sinh_sum.f0) &&
                 Kokkos::fabs(cosh_term.f0) < eps) break;
@@ -1097,7 +1127,7 @@ KOKKOS_INLINE_FUNCTION QuadFloat atanh(QuadFloat a) {
         QuadFloat sum = a, pwr = a;
         for (int k = 1; k <= 60; ++k) {
             pwr = multiply(pwr, a2);
-            QuadFloat term = divide(pwr, QuadFloat((float)(2*k + 1)));
+            QuadFloat term = divide_scalar(pwr, (float)(2*k + 1));
             sum = add(sum, term);
             if (Kokkos::fabs(term.f0) < eps * Kokkos::fabs(sum.f0)) break;
         }
