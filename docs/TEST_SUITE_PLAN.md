@@ -206,7 +206,13 @@ within a phase after the first task lands.
   remaining CUDA coupling on `main` (not `CMakeLists.txt`), flagged as a
   follow-up.
 
-**T0.0: Migrate quadmath oracle to Kokkos wrapper.**
+**T0.0: Migrate quadmath oracle to Kokkos wrapper. (DONE)**
+
+- Executed. Task commit `1188418`. Status was never recorded when the task
+  landed; added retroactively in the bucket-1 doc-hygiene pass. Evidence:
+  `find_library(QUADMATH_LIBRARY ...)` and the x86_64 gate are gone from
+  `CMakeLists.txt`, and `tests/test_utils.hpp` carries the Kokkos-wrapped
+  quadmath oracle behind `KOKKOS_EP_HAVE_QUADMATH`.
 
 - Remove `find_library(QUADMATH_LIBRARY ...)` and the x86_64 gate from
   `CMakeLists.txt`. Replace with detection of
@@ -223,7 +229,12 @@ within a phase after the first task lands.
   is now via Kokkos.
 - Do on `main` first, then cherry-pick to `ddfunKokkos`, `fffunKokkos`.
 
-**T0.1: Test harness skeleton (backend-parameterized).**
+**T0.1: Test harness skeleton (backend-parameterized). (DONE)**
+
+- Executed. Task commit `6435ab1`. Status was never recorded when the task
+  landed; added retroactively in the bucket-1 doc-hygiene pass. Evidence:
+  `tests/` exists with `tests/CMakeLists.txt` registering 33 targets via the
+  `kokkos_ep_add_*` helpers; framework choice is CTest + `test_utils.hpp`.
 
 - Create `tests/` directory, wire into `CMakeLists.txt` with
   `enable_testing()` and `add_test`.
@@ -810,7 +821,7 @@ task reported, did not patch). The corresponding test is the durable acceptance
 gate. Pick up in any order after Phase 2/3, not now; these are stubs, one
 screenful each.
 
-**B1: `tgamma` — Lanczos coefficients at DD precision (higher-order Lanczos, g≈20.32 / N=24).**
+**B1: `tgamma` — Lanczos coefficients at DD precision (higher-order Lanczos, g≈20.32 / N=24). (DONE)**
 
 - **Scope revised (2026-08-06).** The stub as originally written scoped the fix to
   "promote the nine g=7 coefficients to DD precision, keep the g=7 structure". That
@@ -1101,7 +1112,7 @@ screenful each.
 - Depends on T1.4 (regression gate), B3 (erf asymptotic branch
   this factors from).
 
-**B3: `erf` — asymptotic branch for |z| > ~8.**
+**B3: `erf` — asymptotic branch for |z| > ~8. (DONE)**
 
 - **Read first:** `dd_math.hpp:669-716` (erf, both branches);
   `tests/dd_accuracy_test.cpp` erf row; B2 (shared asymptotic-region concern).
@@ -1235,7 +1246,7 @@ screenful each.
   `tests/` changes (the 25.91 gate was already encoded in `dd_accuracy_test`'s
   tolerance table).
 
-**B4: FF `exp` — original scope INVALIDATED by empirical investigation. Superseded by B8.**
+**B4: FF `exp` — original scope INVALIDATED by empirical investigation. Superseded by B8. (SUPERSEDED)**
 
 - **Status: closed without code fix.** The stub's originally-hypothesized root
   cause (Taylor-eps constant `1.0e-15f` finer than FF's ~3.55e-15 resolution,
@@ -2839,7 +2850,7 @@ T1.4's DD B1/B2/B3).
 QF does not exist yet. Phase 3 = build + validate. Model after QD's
 `qd_real.cc`.
 
-**T3.0a: QF library — arithmetic and renormalization.**
+**T3.0a: QF library — arithmetic and renormalization. (DONE)**
 
 - Create branch `qffunKokkos` from `fffunKokkos` (inherits FF
   infrastructure).
@@ -2922,7 +2933,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   39-op demo needs transcendentals; no demo source exists yet).
 - See `d47947b` for the code diff and this DONE block for the outcome.
 
-**T3.0b: QF library — transcendentals.**
+**T3.0b: QF library — transcendentals. (DONE)**
 
 - Add to `qf_math.hpp`:
   - `exp` (Taylor with argument reduction; more terms than QD's FP64
@@ -3031,7 +3042,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - See `d50099b` for the code diff and this DONE block for the outcome.
   `qf_complex.hpp` and `demo_qf_complex.cpp` deferred to new §T3.0c slot.
 
-**T3.0c: QF complex library.**
+**T3.0c: QF complex library. (DONE)**
 
 - Port `third_party/include/ff_complex.hpp` mechanically to QF, mirroring the
   DD→FF complex port done pre-T2.0 on `fffunKokkos`.
@@ -3140,7 +3151,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   it (`twoSum` / Dekker `twoProd` / `renorm_4` at primitive level).
 - See `74f28a2` for the code diff and this DONE block for the outcome.
 
-**T3.1: EFT unit tests for QF.**
+**T3.1: EFT unit tests for QF. (DONE)**
 
 - Test `twoSum`, Dekker `twoProd` at primitive level (same as FF —
   QF reuses FF's primitives internally).
@@ -3235,7 +3246,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
   across every QF op, 10⁶ inputs + corpus).
 - See `3c40cf7` for the code diff and this DONE block for the outcome.
 
-**T3.2: Non-overlap invariant checks for QF.**
+**T3.2: Non-overlap invariant checks for QF. (DONE)**
 
 - Priest length-4 invariant: `|f_{i+1}| ≤ ½ ulp(f_i)` for i = 0,1,2.
 - Every QF op, 10⁶ inputs + corpus.
@@ -3320,7 +3331,7 @@ QF does not exist yet. Phase 3 = build + validate. Model after QD's
 - See `4627336` (test), `353193d` (gate flip), `104027c` (§16) for the code/doc
   diffs and this DONE block for the outcome.
 
-**T3.3: Property/identity tests for QF.**
+**T3.3: Property/identity tests for QF. (DONE)**
 
 - Same identities as T1.3/T2.3, adjusted for QF's ~29 digit precision.
 
@@ -3889,9 +3900,13 @@ term. (The DDFUN website also asks commercial users to contact the author at
 | `patches/kokkos_complex_quad_math.hpp` | Apache-2.0 WITH LLVM-exception |
 | Everything else (demos, tests, harness, corpus, scripts, docs) | Apache-2.0 (`LICENSE`) |
 
-### Phase 2/3 open question — FF and QF port lineage
+### Phase 2/3 port lineage — FF and QF (RESOLVED)
 
-FF (`fffunKokkos`) and QF (`qffunKokkos`) must each have their license verified
+FF inherits the **DHB-License** (DDFUN-derived); QF inherits the
+**LBNL-BSD-License** (QD-derived). Both verified and applied — see the ticked
+action items below. Kept as the record of the distinction; nothing here is open.
+
+FF (`fffunKokkos`) and QF (`qffunKokkos`) each had their license verified
 against their actual source tree **before** merging into `main`:
 
 - If ported from **DDFUN** directly → inherits the **DHB-License** (Bailey,
@@ -3912,9 +3927,16 @@ items:
       independent authorship). Both FF headers now carry `LicenseRef-DHB-License`,
       mirroring the T0.5 DD treatment, with a PORT_NOTES-referencing attribution.
       Applied in the T2.0 merge commit.
-- [ ] **T3.0a kickoff:** verify QF port lineage (DDFUN vs QD — QF is modeled on
-      QD's `qd_real.cc`, so likely `LBNL-BSD-License`) and apply the correct
-      license header before merging `qffunKokkos` into `main`.
+- [x] **T3.0a kickoff:** QF port lineage verified — QF is modeled on QD 2.3.24
+      (`qd_real.cpp` / `qd_inline.h`), **not** on DDFUN, so it inherits the
+      `LBNL-BSD-License` rather than the DHB-License that governs dd/ff. Applied:
+      `qf_math.hpp` and `qf_complex.hpp` carry
+      `SPDX-License-Identifier: LicenseRef-LBNL-BSD-License` with the lineage
+      rationale in-header, `LICENSES/LicenseRef-LBNL-BSD-License.txt` holds the
+      full text, and NOTICE.md maps both files to it (refreshed in `96880eb`).
+
+**Both action items are closed** — this section is retained as the record of how
+the two licenses were told apart, not as outstanding work.
 
 ### Argonne institutional review (Reet's follow-up)
 
