@@ -11,10 +11,9 @@
 //   twoProd(a, b) -> (p, e)   with  p = fl(a * b)  and  e = (a * b) - p exactly
 //
 // These two transforms are the atoms of double-double arithmetic. Every DD op
-// in third_party/include/dd_math.hpp is built on the twoSum inside `add`
-// (dd_math.hpp:178-185) and the Dekker twoProduct inside `multiply`
-// (dd_math.hpp:197-211, equivalently the standalone `two_prod`, dd_math.hpp:270-
-// 278). If either EFT is not bit-exact, NOTHING downstream (sqrt/exp/log/sin/…)
+// in third_party/include/dd_math.hpp is built on the twoSum inside `add` and the
+// Dekker twoProduct inside `multiply` (equivalently the standalone `two_prod`).
+// If either EFT is not bit-exact, NOTHING downstream (sqrt/exp/log/sin/…)
 // is trustworthy — the whole precision claim rests on these primitives. So this
 // layer tests them in isolation, at the raw-double level, BEFORE any higher-
 // level op is exercised (those are T1.2 invariants / T1.3 properties / T1.4
@@ -87,8 +86,8 @@ using namespace kokkos_ep;
 
 struct TwoOut { double hi; double lo; };
 
-// Mirrors the twoSum embedded in Kokkos::Experimental::add (dd_math.hpp:178-185)
-// with a.lo == b.lo == 0. Knuth's twoSum: unconditionally exact for all finite
+// Mirrors the twoSum embedded in Kokkos::Experimental::add, with
+// a.lo == b.lo == 0. Knuth's twoSum: unconditionally exact for all finite
 // FP64 a, b when a + b does not overflow (subnormals included — addition has no
 // underflow hazard).
 KOKKOS_INLINE_FUNCTION TwoOut two_sum(double a, double b) {
@@ -98,8 +97,8 @@ KOKKOS_INLINE_FUNCTION TwoOut two_sum(double a, double b) {
     return TwoOut{ s, err };                 // hi = s = fl(a+b), lo = err = exact error
 }
 
-// Mirrors the Dekker twoProduct embedded in Kokkos::Experimental::multiply
-// (dd_math.hpp:197-211), equivalently `two_prod` (dd_math.hpp:270-278), with
+// Mirrors the Dekker twoProduct embedded in Kokkos::Experimental::multiply,
+// equivalently the standalone `two_prod`, with
 // a.lo == b.lo == 0. Splitter 134217729.0 = 2^27 + 1. Exact provided no overflow
 // occurs in the splitter (a*split), in a1*b1, or in the product, and no underflow
 // occurs (Dekker 1971; Muller et al., "Handbook of Floating-Point Arithmetic",

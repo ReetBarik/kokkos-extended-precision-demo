@@ -28,7 +28,7 @@
 // CLASSIFICATION NOTES (decided by inspecting dd_math.hpp, then confirmed by the
 // run) — why A7 is DEMOTED and A8 is NOT:
 //
-//   * add(a,b) (dd_math.hpp:178-185) is Knuth twoSum folding a.lo+b.lo. For
+//   * add(a,b) is Knuth twoSum folding a.lo+b.lo. For
 //     inputs built from a plain double (lo==0), the twoSum error term is EXACT
 //     and independent of operand order, and the +a.lo+b.lo tail vanishes; hence
 //     add(a,b)==add(b,a) BIT-EXACTLY on single-double inputs → Group A (A8). We
@@ -36,14 +36,14 @@
 //     with a nonzero .lo the trailing (E+a.lo)+b.lo would reorder and lose
 //     bit-exactness — that generalization is deliberately NOT claimed here.
 //
-//   * multiply(a,b) (dd_math.hpp:197-211) is Dekker, whose cross-term sum
+//   * multiply(a,b) is Dekker, whose cross-term sum
 //     c21 = (((a1*b1 - c11) + a1*b2) + a2*b1) + a2*b2 adds a1*b2 and a2*b1 in a
 //     FIXED a-first order. Swapping operands reorders those two addends, and FP
 //     addition is not associative, so multiply is NOT bit-symmetric even on
 //     single-double inputs. So the task's A7 (multiply commutativity) is DEMOTED
 //     from Group A to Group B with a rounding tolerance (identity "mul_comm").
 //
-//   * sin(-a)==-sin(a) / cos(-a)==cos(a): sincos (dd_math.hpp:439-483) reduces
+//   * sin(-a)==-sin(a) / cos(-a)==cos(a): `sincos` reduces
 //     the argument mod 2π and recovers sin as is·√(1-cos²). The reduction and
 //     recovery are not guaranteed sign-symmetric bit-for-bit, so B5/B6 are placed
 //     in Group B with a tight (~2u²) tolerance rather than asserted bit-exact.

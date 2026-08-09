@@ -51,8 +51,9 @@
 // NOT the bottom-of-header `Kokkos::` re-exposure forwards. Reason: every other DD
 // test in this suite (dd_property_test, dd_invariant_test, dd_eft_test) uses the
 // `dd::` alias, so this file stays consistent with the suite's convention and the
-// call sites read the same. The two paths are one-line-forward equivalent
-// (dd_math.hpp:868-910), so the choice is stylistic, not behavioral.
+// call sites read the same. The two paths are one-line-forward equivalent (see
+// the bottom-of-header `namespace Kokkos` forwarding block in dd_math.hpp), so
+// the choice is stylistic, not behavioral.
 //
 // SCOPE (per plan): real DD kernels only — no complex (dd_complex.hpp), no FF/QF
 // (T2.6/T3.6), no per-op differential accuracy (T1.4, the sibling task). Host-side

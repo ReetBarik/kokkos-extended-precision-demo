@@ -5,7 +5,7 @@
 // WHAT THIS TEST IS AND WHY IT EXISTS
 // -----------------------------------
 // DD's `multiply` computes the exact product error term via Dekker's twoProduct
-// (splitter 134217729.0 = 2^27 + 1, dd_math.hpp:197-211). The error term
+// (splitter 134217729.0 = 2^27 + 1, in `multiply`). The error term
 //
 //     e = (((a1*b1 - p) + a1*b2) + a2*b1) + a2*b2
 //
@@ -110,7 +110,7 @@ static const char* kPostureName = "ON  (-ffp-contract=fast / --fmad=true)";
 
 struct TwoOut { double hi; double lo; };
 
-// twoSum (Knuth) — mirrors the transform embedded in add (dd_math.hpp:178-185)
+// twoSum (Knuth) — mirrors the transform embedded in `add`,
 // with a.lo == b.lo == 0. CONTROL: all +/-, no mul-then-± adjacency, so no
 // compiler can contract it; it must stay exact under both postures.
 KOKKOS_INLINE_FUNCTION TwoOut two_sum(double a, double b) {
@@ -120,8 +120,8 @@ KOKKOS_INLINE_FUNCTION TwoOut two_sum(double a, double b) {
     return TwoOut{ s, err };
 }
 
-// Dekker twoProduct — mirrors multiply (dd_math.hpp:197-211) / two_prod
-// (dd_math.hpp:270-278) with a.lo == b.lo == 0. Splitter 134217729.0 = 2^27 + 1.
+// Dekker twoProduct — mirrors `multiply` / the standalone `two_prod`,
+// with a.lo == b.lo == 0. Splitter 134217729.0 = 2^27 + 1.
 // THE PRIMITIVE UNDER TEST: `a1*b1 - p` (and the a1*b2 / a2*b1 / a2*b2 terms) are
 // the mul-then-± pairs a compiler may fuse into an FMA, which would break the EFT.
 KOKKOS_INLINE_FUNCTION TwoOut two_prod_dekker(double a, double b) {

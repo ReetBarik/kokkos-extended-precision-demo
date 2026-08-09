@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
        [](float128 x){ return Kokkos::sqrt(x); }, corpus_unary_all},
 
       // round-family: TIES-TO-EVEN in DDFUN -> oracle is nearbyint, NOT round
-      // (dd_math.hpp:289-300 round_to_nearest_int; :661 round). Bound: exact for
+      // (`round_to_nearest_int`; `round` forwards to it). Bound: exact for
       // |x|<2^52 (result is an integer, representable); observed empirically at
       // the T1.2 range |x|<1e15.
       {"round_to_nearest_int",
@@ -551,8 +551,8 @@ int main(int argc, char** argv) {
 
     std::vector<BinaryOp> binary_ops = {
       // add/subtract: near-cancellation loses leading digits (matches FP64) ->
-      // registry sub/... Bound: <=2u² away from cancellation (twoSum-based add;
-      // dd_math.hpp:178-185).
+      // registry sub/... Bound: <=2u² away from cancellation (twoSum-based
+      // `add`).
       {"add",      dom2_any, uniform(-1e8, 1e8), uniform(-1e8, 1e8),
        [](dd::DoubleDouble a, dd::DoubleDouble b){ return dd::add(a, b); },
        [](float128 a, float128 b){ return a + b; }, corpus_binary_all},
