@@ -3952,9 +3952,16 @@ for Argonne open-source releases.
 - `main` branch: DD, FF, QF all present, all benchmarked against Kokkos-
   wrapped quadmath oracle. `ctest` gates all three backends across all
   six test layers.
-- Four backend branches maintained (`ddfunKokkos`, `fffunKokkos`,
+- ~~Four backend branches maintained (`ddfunKokkos`, `fffunKokkos`,
   `qffunKokkos`, `CUDAFP128Kokkos`) — synced periodically with `main`
-  for their respective backends; tests apply per-branch as relevant.
+  for their respective backends.~~ **Superseded.** Once DD, FF and QF all
+  landed on `main`, the per-backend branches stopped being synced and
+  became stale copies of merged work; `ddfunKokkos` and `fffunKokkos`
+  were retired during earlier cleanups and `qffunKokkos` in the bucket-1/2
+  close. **The intended steady state is two branches: `main` (all three
+  portable backends) and `CUDAFP128Kokkos` (the sm_100-only FP128 backend,
+  which cannot merge into `main` because it needs compute ≥ 10.0).**
+  Ratified by Reet, 2026-08-09.
 - `PORT_NOTES.md` extended with QF port notes (bugs found during T3.0
   development, per PORT_NOTES.md § template).
 - README updated: three portable extended-precision backends

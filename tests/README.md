@@ -484,16 +484,22 @@ floor): QF `sincos` has no `FFCSSNR`-style iteration stall.
 > ~11.2M checked results** (no genuine corruption), **19 weak deviations across 9
 > ops** (`log`, `cos`, `sincos.cos`, `subtract`, `fmod`, `remainder`, `fdim`,
 > `multiply_scalar`, `pow_int`; worst ratio **1.375** = `fmod`, all `< 2.0` = all
-> inside the ulp band, robustly driven by `fmod`/`remainder`). Under the **default
-> strict** gate (`kStrictPriestGate=true`, the faithful reading of the T3.2 spec)
-> these 9 ops count as failures → the test **ships RED** (RC=1). This is *systemic*
+> inside the ulp band, robustly driven by `fmod`/`remainder`). This is *systemic*
 > (shared renorm path), not per-op bugs, and unfixable without replacing the library's
-> normalization — **Rule 4 forbids** patching `qf_math.hpp`. It is the **"unclear"
-> branch** of the acceptance-gate decision tree: a conditioning/algorithmic limit, but
-> no `PORT_NOTES_QF.md §5` exists to house it and T3.2 may not create one. So it is
-> **reported and deferred to Reet** — flip `kStrictPriestGate → false` for the
-> Shewchuk gate (GREEN) if that posture is adopted. **Not silently loosened.** The
+> normalization — **Rule 4 forbids** patching `qf_math.hpp`. The
 > device tripwire (5 ops) and all 13 Test-C corner cases pass.
+>
+> **RESOLVED — the Shewchuk gate is the adopted posture.** T3.2 shipped this as the
+> "unclear" branch of the acceptance-gate decision tree and deferred the call. It has
+> since been made and recorded in **`PORT_NOTES_QF.md` §16**, which carries the
+> algorithmic proof: QD's `renorm` is a `quick_two_sum` cascade, which *cannot* beat
+> `|f_{i+1}| ≤ ulp(f_i)`, so a word landing in `(½ ulp, ulp]` is expected behaviour,
+> not a defect. `kStrictPriestGate` is therefore **`false` by default** and the test
+> is **GREEN**. Setting it `true` restores the strict Priest reading and turns those
+> 9 ops RED again — retained as a diagnostic switch only. Either way the strict
+> ½-ulp check still runs on every result and every deviation is tallied with its
+> overlap ratio, so nothing is hidden. **Not silently loosened** — changing the gate
+> means flipping that one reviewed flag, never weakening the check itself.
 
 > **Expected internal diagnostic.** `angle`/`atan2` each emit 9 `QFCSSNR: argument
 > too large` prints (18 total) — QF `sincos`'s internal large-argument guard firing
