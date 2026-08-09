@@ -1,5 +1,6 @@
 /build/
 /build_opt/
+/README_PARKED.md
 /build_logs/
 /kokkos/
 /setup.sh

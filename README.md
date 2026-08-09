@@ -38,7 +38,7 @@ See the corresponding `*_complex.hpp` header for each.
 
 ### Operation inventory
 
-All three real demos expose the same 39 real operations:
+All three backends expose the same 39 real operations:
 
 | Category | Operations |
 |---|---|
@@ -50,7 +50,7 @@ All three real demos expose the same 39 real operations:
 | 3-input | `fma` |
 | Rounding | `ceil floor round trunc` |
 
-All three complex demos expose the same 24 complex operations:
+All three complex layers expose the same 24 complex operations:
 
 | Category | Operations |
 |---|---|
@@ -74,10 +74,10 @@ the result was correct to every digit the format can hold, not that error was
 zero. Inputs are drawn per operation from an `mt19937_64` reseeded with `--seed`
 each time, so a single-operation run reproduces the corresponding row exactly.
 
-This table reports accuracy only; cost is treated separately under **Emulation
-cost** below. Both sets of measurements come from a single-threaded Serial
-build, which bounds what the timings can be read to mean — see the caveats
-there.
+**Accuracy only — no cost figures are reported here.** How to present the cost
+of each backend is still an open question and is deliberately left out rather
+than stated badly. The measurements below come from a single-threaded Serial
+build.
 
 These figures are optimization-invariant, and that was checked rather than
 assumed: for each of the three backends the full 39-operation sweep was re-run
@@ -86,15 +86,14 @@ builds in every statistic. `CMAKE_CXX_EXTENSIONS OFF` means the backends
 compile as strict ISO `-std=c++20`, where GCC leaves `-ffp-contract` off, so no
 Dekker or TwoSum sequence gets contracted into an FMA. The `*_fma_guard_test`
 targets pin that down directly — with contraction forced to `fast` at `-O3`,
-they still observe zero incorrect error terms. Cost, by contrast, is *highly*
-sensitive to optimization level; see the warning under **Emulation cost**.
+they still observe zero incorrect error terms.
 
-**Statistic note.** The columns are the four statistics the demos compute
-natively: min, max, median, mean. A p99 column was considered and is not
-reported — the demos do not compute percentiles, and for an accuracy metric
-(where higher is better) the 99th percentile reads the *best* tail, which sits at
-the clamp ceiling for nearly every operation. `Min` is the worst observed element
-across the batch and is the column to read for worst-case behaviour.
+**Statistic note.** The four statistics reported are min, max, median, and
+mean. A p99 column was considered and is not reported — percentiles are not
+computed, and for an accuracy metric (where higher is better) the 99th
+percentile reads the *best* tail, which sits at the clamp ceiling for nearly
+every operation. `Min` is the worst observed element across the batch and is
+the column to read for worst-case behaviour.
 
 #### DD (double-double) — ceiling 31.00 digits
 
@@ -232,167 +231,6 @@ The mean-gated regression versions of these measurements live in
 `dd_accuracy_test`, `ff_accuracy_test`, and `qf_accuracy_test`, which assert a
 per-operation floor rather than merely reporting numbers.
 
-### Emulation cost
-
-The useful question is not "how much slower than FP64 is extended precision" —
-FP64 is not a substitute for a 29- or 31-digit type, so that ratio compares
-things nobody chooses between. Each backend is instead measured against the
-incumbent that delivers **comparable precision**:
-
-| Backend | Digits | Incumbent it substitutes for | Why |
-|---|---|---|---|
-| FF | ~14 | FP64 (~16) | FF rebuilds FP64-class precision out of FP32, for hardware where FP64 is absent or rate-limited |
-| DD | ~31 | `__float128` / libquadmath (~34) | libquadmath is the incumbent software path at this precision |
-| QF | ~29 | `__float128` / libquadmath (~34) | same precision tier as DD |
-
-Median of 5 repeats, batch 20000, seed 12345, Kokkos Serial, GCC 13.3.0,
-`-O3 -DNDEBUG` (the default `CMAKE_BUILD_TYPE=Release`), AMD EPYC 7532. Inputs
-are converted to each backend's type **before** the timed region, so what is
-measured is the operation and not the cost of constructing the type. A ratio
-below 1.00x means the backend is faster than the incumbent.
-
-Each timed loop accumulates into a same-type running sum to keep the compiler
-from discarding the work, so every row carries one extra add of its own type.
-For the `add` and `sub` rows that is symmetric and harmless; elsewhere it
-slightly flattens the ratios toward 1.00x, most noticeably on the cheap
-arithmetic rows.
-
-| Op | Class | FP64 ms | FF ×FP64 | `__float128` ms | DD ×f128 | QF ×f128 |
-|---|---|---|---|---|---|---|
-| `add` | arithmetic | 0.033 | 9.2× | 1.279 | 0.24× | 2.38× |
-| `sub` | arithmetic | 0.033 | 10.3× | 1.394 | 0.25× | 2.33× |
-| `mul` | arithmetic | 0.033 | 15.4× | 1.421 | 0.28× | 3.15× |
-| `div` | arithmetic | 0.034 | 28.1× | 2.033 | 0.36× | 8.34× |
-| `sqrt` | arithmetic | 0.095 | 10.4× | 19.951 | 0.05× | 3.24× |
-| `fma` | arithmetic | 0.123 | 5.8× | 25.773 | 0.02× | 0.26× |
-| `exp` | transcendental | 0.202 | 112.0× | 32.111 | 0.77× | 4.18× |
-| `log` | transcendental | 0.116 | 235.5× | 19.333 | 2.28× | 15.04× |
-| `sin` | transcendental | 0.418 | 50.0× | 18.110 | 0.79× | 8.56× |
-| `cos` | transcendental | 0.447 | 47.0× | 17.952 | 0.80× | 8.66× |
-| `atan` | transcendental | 0.215 | 320.4× | 11.446 | 4.30× | 48.03× |
-| `pow` | transcendental | 0.342 | 117.1× | 48.505 | 1.19× | 8.00× |
-
-Reproduce with `./build/kokkos_ep_bench_cost --batch 20000 --repeats 5`.
-
-**Build the optimized configuration before reading anything into these
-numbers.** The ratios are extremely sensitive to it. DD, FF and QF are
-header-only `KOKKOS_INLINE_FUNCTION` code whose cost model assumes inlining;
-libquadmath and libm are precompiled and optimized regardless of how this
-project is built. An unoptimized build therefore penalises the backends and
-leaves the incumbents untouched — measured at `-O0`, DD `add` reads 1.42×
-instead of 0.24×, and the table inverts from "DD beats libquadmath" to "DD
-loses to it". A stale build directory with `CMAKE_CXX_FLAGS_RELEASE` emptied
-will reproduce exactly that error.
-
-Reading the table:
-
-- **DD beats libquadmath on arithmetic outright** — 0.24–0.36×, i.e. 3–4×
-  faster — and by a wide margin on `sqrt` (20×) and `fma` (50×), where
-  libquadmath's correctly-rounded software implementations are expensive. On
-  transcendentals it splits: faster on `exp`, `sin`, `cos`, roughly par on
-  `pow`, and slower on `log` (2.3×) and `atan` (4.3×). It gives up 3 digits
-  against `__float128` and, unlike libquadmath, runs inside a device kernel.
-- **Arithmetic and transcendentals are different regimes.** Kernels dominated
-  by `+`, `*`, and `fma` — dot products, stencils, axpy, matrix products — live
-  in the top half of the table, where DD is unambiguously the cheaper choice.
-  The transcendental rows are not representative of that cost.
-- **These are host numbers, and host is FF's and QF's worst case.** On this CPU
-  an FP32 add costs the same as an FP64 add, so FF and QF pay for extra words
-  with no compensating throughput. Their target is hardware where FP64 runs at
-  1:32 or 1:64 against FP32; there, the FP64 baseline is itself penalised by
-  that factor and the comparison inverts. On this EPYC, DD dominates QF on both
-  speed and precision.
-- **`__float128` is not a free reference point.** It implements full IEEE
-  binary128 with correct rounding, subnormals, and exception semantics. DD and
-  QF are unevaluated multi-word expansions with a narrower exponent range and
-  no correct-rounding guarantee. A win against libquadmath is real but is not
-  like-for-like.
-
-#### Appendix: static op counts
-
-Arithmetic volume per call, counted by walking the header implementation — not
-a timing measurement. These are useful for comparing **backends to each other**
-(QF `log` is 7.2× DD `log`), and for locating where an algorithm spends its
-work. They are **not** a ratio against hardware FP64: by convention 3 below, a
-libm call counts as 1 op, so an FP64 elementary function scores 1 against a
-fully inlined multi-word expansion. Use the cost table above for that
-comparison.
-
-| Op | DD | FF | QF |
-|---|---|---|---|
-| `add` | 11 | 11 | 88 |
-| `sub` | 12 | 12 | 92 |
-| `mul` | 32 | 48 | 214 |
-| `div` | 43 | 54 | 643 |
-| `sqrt` | 47 | 61 | 3137 |
-| `abs` | 3 | 3 | 5 |
-| `exp` | 1213 | 1085 | 8814 |
-| `log` | 3839 | 2326 | 27643 |
-| `exp2` | 1245 | 1133 | 9028 |
-| `exp10` | 1245 | 1133 | 9028 |
-| `expm1` | 1226 | 1098 | 8907 |
-| `log2` | 3882 | 2380 | 28286 |
-| `log10` | 3882 | 2380 | 28286 |
-| `log1p` | 3850 | 2337 | 27731 |
-| `sin` | 1371 | 2086 | 15340 |
-| `cos` | 1371 | 2086 | 15340 |
-| `tan` | 1256 | 1934 | 14677 |
-| `asin` | 4380 | 6893 | 52961 |
-| `acos` | 4380 | 6893 | 52961 |
-| `atan` | 4288 | 6771 | 49517 |
-| `sinh` | 1335 | 1250 | 9647 |
-| `cosh` | 1335 | 1250 | 9647 |
-| `tanh` | 1309 | 1207 | 9643 |
-| `acosh` | 3942 | 2459 | 31175 |
-| `asinh` | 3941 | 2458 | 31171 |
-| `atanh` | 3934 | 2448 | 28474 |
-| `pow` | 5085 | 3460 | 36672 |
-| `hypot` | 122 | 168 | 3653 |
-| `fmod` | 129 | 138 | 952 |
-| `remainder` | 113 | 122 | 976 |
-| `copysign` | 6 | 6 | 10 |
-| `fmax` | 2 | 2 | 2 |
-| `fmin` | 2 | 2 | 2 |
-| `fdim` | 14 | 14 | 94 |
-| `fma` | 43 | 59 | 302 |
-| `ceil` | 40 | 22 | 2 |
-| `floor` | 41 | 23 | 2 |
-| `round` | 26 | 8 | 27 |
-| `trunc` | 42 | 24 | 3 |
-
-**Counting convention.**
-
-1. **What counts as one op.** Every `+`, `-`, `*`, `/`, `fma`, `sqrt`, and every
-   comparison or select on a native-precision value counts as 1 op at the
-   backend's baseline — FP64 for DD, FP32 for FF and QF.
-2. **Error-free transforms are fully inlined.** A `two_sum` expands to its 6
-   component ops, a `two_prod` to its 17. No structured breakdown appears in the
-   table; each cell is a single integer. The repository compiles with FMA
-   contraction off — the main `CMakeLists.txt` sets no contraction flag and GCC
-   defaults to `-ffp-contract=off` for standard C++ — and the headers implement
-   `two_prod` as an explicit Dekker split with no FMA path, so the non-FMA count
-   applies throughout.
-3. **libm calls count as 1 op** at baseline precision; this represents one
-   hardware-approximate elementary function evaluation, not literal cycle cost.
-   Where an operation seeds from libm and refines, the count is 1 + the
-   correction ops.
-4. **Constant-table loads are 0 ops** — they are loads, not arithmetic.
-   Polynomial evaluation counts each individual multiply and add.
-5. **Branches follow the general-case path** — the branch most finite,
-   well-behaved inputs take for that operation's input range in the accuracy
-   demo. Fast-path shortcuts for special values are not counted.
-6. **Iterative refinement is counted at the iteration count the code actually
-   runs.** Fixed loops count their trip count; convergence-checked loops count
-   the typical case for the demo's input distribution. Series counts therefore
-   depend on the reduced argument range and on each backend's convergence
-   epsilon, which is why the same operation can differ across backends by more
-   than the word count alone.
-7. **Counts are positive integers**; no fractional counts are reported.
-
-These are static algorithmic counts. They describe arithmetic volume, not
-runtime — they ignore instruction-level parallelism, memory effects, and the
-serial dependency chains that dominate renormalization-heavy code.
-
 ## Section 3 — Repository layout
 
 ```
@@ -414,79 +252,16 @@ src/
     demo_ff_complex.cpp    FF complex-operation demo   -> kokkos_ep_demo_ff_complex
     demo_qf_real.cpp       QF real-operation demo      -> kokkos_ep_demo_qf
     demo_qf_complex.cpp    QF complex-operation demo   -> kokkos_ep_demo_qf_complex
-    bench_cost.cpp         tier-relative cost benchmark -> kokkos_ep_bench_cost
+    bench_cost.cpp         cost benchmark harness      -> kokkos_ep_bench_cost
 
 tests/                 23-test ctest suite covering all three backends
 docs/                  TEST_SUITE_PLAN.md, PORT_NOTES_QF.md
 scripts/               build helpers, coefficient generators, run-all scripts
 PORT_NOTES.md          port-specific fixes and design lessons
-LICENSE, NOTICE.md, LICENSES/   licensing — see Section 7
+LICENSE, NOTICE.md, LICENSES/   licensing — see Section 6
 ```
 
-## Section 4 — Demos
-
-Six executables. Each generates random inputs for the selected operation, runs
-the extended-precision kernel and an FP64 kernel over the same data, and reports
-timing alongside accuracy scored against the `__float128` host oracle.
-
-- **`kokkos_ep_demo`** — DD, real operations. Reports slowdown versus FP64 and DD
-  accuracy in decimal digits.
-- **`kokkos_ep_demo_complex`** — DD, complex operations. Two rows per operation
-  (real part, imaginary part).
-- **`kokkos_ep_demo_ff`** — FF, real operations. Reports FF and FP64 kernel time
-  in milliseconds side by side, plus accuracy for each.
-- **`kokkos_ep_demo_ff_complex`** — FF, complex operations. Same two-rows-per-
-  operation layout as the DD complex demo.
-- **`kokkos_ep_demo_qf`** — QF, real operations. Same time-and-accuracy layout as
-  the FF real demo, and additionally prints a per-operation pass verdict against
-  a mean-accuracy gate.
-- **`kokkos_ep_demo_qf_complex`** — QF, complex operations.
-
-The DD executables are the un-suffixed ones because DD landed first; `_ff` and
-`_qf` name the later backends.
-
-Running them:
-
-```bash
-./build/kokkos_ep_demo_ff --batch 500000 --repeats 5
-./build/kokkos_ep_demo_ff --op sin --batch 1000000 --repeats 5
-```
-
-Arguments: `--op <name>`, `--batch N` (default 1,000,000), `--repeats N`
-(default 5), `--seed N` (default 12345). With no `--op`, every operation runs.
-
-Convenience wrappers for whole-inventory sweeps:
-
-```bash
-./scripts/run_all_ops.sh              # DD real
-./scripts/run_all_complex_ops.sh      # DD complex
-./scripts/run_all_ff_ops.sh           # FF real
-./scripts/run_all_ff_complex_ops.sh   # FF complex
-./scripts/run_all_qf_ops.sh           # QF real
-./scripts/run_all_qf_complex_ops.sh   # QF complex
-```
-
-### Cost benchmark
-
-A seventh executable, **`kokkos_ep_bench_cost`**, is not a demo: it produces the
-**Emulation cost** table in Section 2. It times each backend against the
-incumbent at comparable precision — FF against FP64, DD and QF against
-`__float128` — rather than against FP64 across the board, and converts inputs to
-each backend's type before the timed region so the measurement is the operation
-and not the conversion.
-
-```bash
-./build/kokkos_ep_bench_cost --batch 20000 --repeats 5
-./build/kokkos_ep_bench_cost --op log
-```
-
-Arguments: `--op <name>`, `--batch N` (default 20,000), `--repeats N` (default
-5), `--seed N` (default 12345). Twelve operations are covered — six arithmetic
-(`add sub mul div sqrt fma`) and six transcendental (`exp log sin cos atan
-pow`) — chosen to span both cost regimes rather than to mirror the demos' full
-39-operation inventory.
-
-## Section 5 — Tests
+## Section 4 — Tests
 
 The suite is 23 ctest tests spanning all three backends:
 
@@ -522,7 +297,7 @@ cd build/tests && ctest
 echo "RC=$?"
 ```
 
-## Section 6 — Usage
+## Section 5 — Usage
 
 ### Build
 
@@ -605,7 +380,7 @@ identical across the three. Conversion back to `double` is the one place they
 differ: none of the three defines `operator double`, so the example narrows
 through explicit per-type accessors (`hi`/`lo` for DD and FF, `f0`–`f3` for QF).
 
-## Section 7 — Licensing
+## Section 6 — Licensing
 
 This repository is dual-licensed. Repository-default is Apache-2.0 (see
 `LICENSE`). The DDFUN-derived headers carry `LicenseRef-DHB-License`; the
@@ -625,7 +400,7 @@ the DHB-License §3 grant-back clause live in `NOTICE.md` and `LICENSES/`.
 | `patches/kokkos_complex_quad_math.hpp` | `Apache-2.0 WITH LLVM-exception` |
 | Everything else | `Apache-2.0` |
 
-## Section 8 — References
+## Section 7 — References
 
 - **DDFUN v04** — David H. Bailey.
   <https://www.davidhbailey.com/dhbsoftware/ddfun-v04.tar.gz>
