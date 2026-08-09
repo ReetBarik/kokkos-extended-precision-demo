@@ -36,6 +36,14 @@
 //   * hi is subnormal      — below the smallest normal, ulp(hi) is the fixed
 //                            subnormal step and the "1/2 ulp" argument degrades;
 //                            a nonzero lo there is not a normalization defect
+//   * hi in the underflow tail (|hi| < 2^-967, i.e. 1/2 ulp(hi) itself subnormal)
+//                            — the residual lo is forced onto quantized subnormal
+//                            values that can land EXACTLY on the 1/2 ulp(hi) tie,
+//                            where round-to-even flips fl(hi+lo) off hi by one ulp
+//                            even though non-overlap |lo| <= 1/2 ulp(hi) still
+//                            holds. A property of double-word arithmetic in the
+//                            denormal tail, NOT a dd_math.hpp defect. See
+//                            result_checkable's kUnderflowTail.
 //   * input out of the op's mathematical domain (log of <=0, asin of |x|>1, ...)
 //                            — also avoids the domain-guard diagnostics dd_math.hpp
 //                            prints, which would otherwise spam the log
@@ -88,12 +96,48 @@ inline bool invariant_holds(const dd::DoubleDouble& d) {
 
 // Is this result in the invariant's domain (i.e. should we CHECK it, vs SKIP it)?
 // NaN / inf / subnormal hi are out of domain — see the SKIP criteria header note.
+// UNDERFLOW-TAIL guard (kUnderflowTail): the strict bit-exact form fl(hi+lo)==hi
+// is only WELL-POSED when the tie point 1/2 ulp(hi) is itself a NORMAL double. For
+// hi with unbiased exponent e, 1/2 ulp(hi) = 2^(e-53); this is subnormal once
+// e < -969, i.e. |hi| < 2^-969 (~2.0e-292). In that near-underflow regime the
+// residual lo is forced onto quantized subnormal values that land EXACTLY on the
+// 1/2 ulp(hi) tie, where round-to-even flips fl(hi+lo) off hi by one ulp even
+// though the mathematical non-overlap |lo| <= 1/2 ulp(hi) still holds.
+//
+// This is the DD sibling of ff_invariant_test's guard (T2.2), added per the
+// KNOWN-LURKING note in TEST_SUITE_PLAN.md §T2.2: the hole is a property of the
+// fl(hi+lo)==hi EVALUATION, not of FF, so DD can hit it too.
+//
+// IT IS REACHED TODAY — 86 results, not zero. That note predicted DD was out of
+// reach because FP64's exponent range is ~6x wider, and that reasoning is right
+// about OUTPUTS: dd exp is guarded at |arg| <= 300, bottoming out near 5e-131,
+// 161 orders above this gate, so no DD op COMPUTES its way into the tail. But it
+// misses the INPUT path. corpus.hpp's power-of-two ladder emits 2^-1022 (min
+// normal), 2^-1021 and 2^-1018 with both signs — normal doubles that sit below
+// this gate — and ~14 ops satisfy f(x) ~ x for tiny x (abs, negate, expm1, log1p,
+// asin, atan, sinh, tanh, asinh, ...), so those corpus values pass straight
+// through to the output unchanged. Measured: 86 results across 14 of 50 ops move
+// from tested to skipped (tested 50,005,279 -> 50,005,193, a 0.00017% reduction;
+// max 8 per op). Failures are 0 before AND after — these results were PASSING,
+// they were simply being checked in a regime where the check is not well-posed.
+// The same corpus entries are already skipped on the FF side for the same reason.
+//
+// Derivation mirrors FF's exactly, retargeted from 24-bit to 53-bit mantissa and
+// from the FP32 to the FP64 minimum normal exponent:
+//        FF   1/2 ulp = 2^(e-24), subnormal below 2^-126  ->  gate 2^-100
+//        DD   1/2 ulp = 2^(e-53), subnormal below 2^-1022 ->  gate 2^-967
+// Same 4x (two-binade) margin above the ill-posed boundary. This does NOT mask a
+// genuine overlap: any normal-range hi with |lo| > 1/2 ulp(hi) is still checked.
+static constexpr double kUnderflowTail = 0x1p-967;  // ~8.0e-292; 4x above 2^-969
 inline bool result_checkable(const dd::DoubleDouble& d) {
   if (std::isnan(d.hi)) return false;
   if (std::isinf(d.hi)) return false;
   // subnormal hi: nonzero, finite, magnitude below the smallest normal double.
   if (d.hi != 0.0 && std::isfinite(d.hi) &&
       std::fabs(d.hi) < std::numeric_limits<double>::min())
+    return false;
+  // near-underflow tail: 1/2 ulp(hi) is subnormal, so fl(hi+lo)==hi is ill-posed.
+  if (d.hi != 0.0 && std::fabs(d.hi) < kUnderflowTail)
     return false;
   return true;
 }
