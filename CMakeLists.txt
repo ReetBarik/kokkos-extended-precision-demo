@@ -109,9 +109,19 @@ add_executable(kokkos_ep_demo_qf_complex src/demo_qf_complex.cpp)
 target_include_directories(kokkos_ep_demo_qf_complex PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(kokkos_ep_demo_qf_complex PRIVATE Kokkos::kokkos)
 
+# ---- Cost benchmark ----------------------------------------------------------
+# Times each backend against the incumbent at comparable precision (FF vs FP64,
+# DD/QF vs __float128) rather than against FP64 across the board. Same oracle
+# plumbing as the demos: __float128 arrives through Kokkos::kokkos (LIBQUADMATH
+# TPL, T0.0).
+add_executable(kokkos_ep_bench_cost src/bench_cost.cpp)
+target_include_directories(kokkos_ep_bench_cost PRIVATE ${THIRD_PARTY_INCLUDE})
+target_link_libraries(kokkos_ep_bench_cost PRIVATE Kokkos::kokkos)
+
 install(TARGETS kokkos_ep_demo kokkos_ep_demo_complex
                 kokkos_ep_demo_ff kokkos_ep_demo_ff_complex
                 kokkos_ep_demo_qf kokkos_ep_demo_qf_complex
+                kokkos_ep_bench_cost
         RUNTIME DESTINATION bin)
 
 # ---- Tests (T0.1: backend-parameterized harness) ----------------------------

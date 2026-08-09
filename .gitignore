@@ -1,4 +1,5 @@
 /build/
+/build_opt/
 /build_logs/
 /kokkos/
 /setup.sh
