@@ -85,141 +85,178 @@ reported — the demos do not compute percentiles, and for an accuracy metric
 the clamp ceiling for nearly every operation. `Min` is the worst observed element
 across the batch and is the column to read for worst-case behaviour.
 
+**Ops** = number of native-baseline ops to emulate one call (FP64 for DD, FP32
+for FF/QF); see counting convention below. It is a static count obtained by
+walking the header implementation, not a timing measurement.
+
 #### DD (double-double) — ceiling 31.00 digits
 
-| Op | Min | Max | Median | Mean |
-|---|---|---|---|---|
-| `add` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `sub` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `mul` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `div` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `sqrt` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `abs` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `exp` | 29.29 | 31.00 | 30.42 | 30.44 |
-| `log` | 30.86 | 31.00 | 31.00 | 31.00 |
-| `exp2` | 29.33 | 31.00 | 30.40 | 30.43 |
-| `exp10` | 29.28 | 31.00 | 30.36 | 30.40 |
-| `expm1` | 29.16 | 31.00 | 31.00 | 30.68 |
-| `log2` | 30.85 | 31.00 | 31.00 | 31.00 |
-| `log10` | 30.81 | 31.00 | 31.00 | 31.00 |
-| `log1p` | 30.90 | 31.00 | 31.00 | 31.00 |
-| `sin` | 20.97 | 31.00 | 30.70 | 30.40 |
-| `cos` | 24.47 | 31.00 | 30.54 | 30.45 |
-| `tan` | 20.24 | 31.00 | 29.85 | 29.75 |
-| `asin` | 19.47 | 31.00 | 29.93 | 29.75 |
-| `acos` | 24.97 | 31.00 | 30.86 | 30.65 |
-| `atan` | 29.93 | 31.00 | 30.88 | 30.78 |
-| `sinh` | 26.35 | 31.00 | 30.41 | 30.43 |
-| `cosh` | 29.33 | 31.00 | 30.45 | 30.47 |
-| `tanh` | 29.35 | 31.00 | 31.00 | 30.93 |
-| `acosh` | 30.76 | 31.00 | 31.00 | 31.00 |
-| `asinh` | 30.54 | 31.00 | 31.00 | 31.00 |
-| `atanh` | 25.35 | 31.00 | 30.47 | 30.38 |
-| `pow` | 28.67 | 31.00 | 30.02 | 30.07 |
-| `hypot` | 30.98 | 31.00 | 31.00 | 31.00 |
-| `fmod` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `remainder` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `copysign` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `fmax` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `fmin` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `fdim` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `fma` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `ceil` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `floor` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `round` | 31.00 | 31.00 | 31.00 | 31.00 |
-| `trunc` | 31.00 | 31.00 | 31.00 | 31.00 |
+| Op | Min | Max | Median | Mean | Ops |
+|---|---|---|---|---|---|
+| `add` | 31.00 | 31.00 | 31.00 | 31.00 | 11 |
+| `sub` | 31.00 | 31.00 | 31.00 | 31.00 | 12 |
+| `mul` | 31.00 | 31.00 | 31.00 | 31.00 | 32 |
+| `div` | 31.00 | 31.00 | 31.00 | 31.00 | 43 |
+| `sqrt` | 31.00 | 31.00 | 31.00 | 31.00 | 47 |
+| `abs` | 31.00 | 31.00 | 31.00 | 31.00 | 3 |
+| `exp` | 29.29 | 31.00 | 30.42 | 30.44 | 1213 |
+| `log` | 30.86 | 31.00 | 31.00 | 31.00 | 3839 |
+| `exp2` | 29.33 | 31.00 | 30.40 | 30.43 | 1245 |
+| `exp10` | 29.28 | 31.00 | 30.36 | 30.40 | 1245 |
+| `expm1` | 29.16 | 31.00 | 31.00 | 30.68 | 1226 |
+| `log2` | 30.85 | 31.00 | 31.00 | 31.00 | 3882 |
+| `log10` | 30.81 | 31.00 | 31.00 | 31.00 | 3882 |
+| `log1p` | 30.90 | 31.00 | 31.00 | 31.00 | 3850 |
+| `sin` | 20.97 | 31.00 | 30.70 | 30.40 | 1371 |
+| `cos` | 24.47 | 31.00 | 30.54 | 30.45 | 1371 |
+| `tan` | 20.24 | 31.00 | 29.85 | 29.75 | 1256 |
+| `asin` | 19.47 | 31.00 | 29.93 | 29.75 | 4380 |
+| `acos` | 24.97 | 31.00 | 30.86 | 30.65 | 4380 |
+| `atan` | 29.93 | 31.00 | 30.88 | 30.78 | 4288 |
+| `sinh` | 26.35 | 31.00 | 30.41 | 30.43 | 1335 |
+| `cosh` | 29.33 | 31.00 | 30.45 | 30.47 | 1335 |
+| `tanh` | 29.35 | 31.00 | 31.00 | 30.93 | 1309 |
+| `acosh` | 30.76 | 31.00 | 31.00 | 31.00 | 3942 |
+| `asinh` | 30.54 | 31.00 | 31.00 | 31.00 | 3941 |
+| `atanh` | 25.35 | 31.00 | 30.47 | 30.38 | 3934 |
+| `pow` | 28.67 | 31.00 | 30.02 | 30.07 | 5085 |
+| `hypot` | 30.98 | 31.00 | 31.00 | 31.00 | 122 |
+| `fmod` | 31.00 | 31.00 | 31.00 | 31.00 | 129 |
+| `remainder` | 31.00 | 31.00 | 31.00 | 31.00 | 113 |
+| `copysign` | 31.00 | 31.00 | 31.00 | 31.00 | 6 |
+| `fmax` | 31.00 | 31.00 | 31.00 | 31.00 | 2 |
+| `fmin` | 31.00 | 31.00 | 31.00 | 31.00 | 2 |
+| `fdim` | 31.00 | 31.00 | 31.00 | 31.00 | 14 |
+| `fma` | 31.00 | 31.00 | 31.00 | 31.00 | 43 |
+| `ceil` | 31.00 | 31.00 | 31.00 | 31.00 | 40 |
+| `floor` | 31.00 | 31.00 | 31.00 | 31.00 | 41 |
+| `round` | 31.00 | 31.00 | 31.00 | 31.00 | 26 |
+| `trunc` | 31.00 | 31.00 | 31.00 | 31.00 | 42 |
 
 #### FF (float-float) — ceiling 14.00 digits
 
-| Op | Min | Max | Median | Mean |
-|---|---|---|---|---|
-| `add` | 13.96 | 14.00 | 14.00 | 14.00 |
-| `sub` | 8.81 | 14.00 | 14.00 | 13.96 |
-| `mul` | 13.81 | 14.00 | 14.00 | 14.00 |
-| `div` | 13.60 | 14.00 | 14.00 | 14.00 |
-| `sqrt` | 13.51 | 14.00 | 14.00 | 14.00 |
-| `abs` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `exp` | 10.42 | 14.00 | 13.43 | 13.41 |
-| `log` | 13.92 | 14.00 | 14.00 | 14.00 |
-| `exp2` | 12.13 | 14.00 | 13.39 | 13.41 |
-| `exp10` | 12.18 | 14.00 | 13.37 | 13.40 |
-| `expm1` | 12.35 | 14.00 | 14.00 | 13.79 |
-| `log2` | 13.80 | 14.00 | 14.00 | 14.00 |
-| `log10` | 13.78 | 14.00 | 14.00 | 14.00 |
-| `log1p` | 13.92 | 14.00 | 14.00 | 14.00 |
-| `sin` | 8.74 | 14.00 | 13.82 | 13.72 |
-| `cos` | 8.16 | 14.00 | 13.80 | 13.72 |
-| `tan` | 12.86 | 14.00 | 14.00 | 13.95 |
-| `asin` | 12.21 | 14.00 | 13.97 | 13.84 |
-| `acos` | 9.10 | 14.00 | 14.00 | 13.93 |
-| `atan` | 13.70 | 14.00 | 14.00 | 14.00 |
-| `sinh` | 12.33 | 14.00 | 13.66 | 13.63 |
-| `cosh` | 12.53 | 14.00 | 13.68 | 13.65 |
-| `tanh` | 12.56 | 14.00 | 14.00 | 13.96 |
-| `acosh` | 13.99 | 14.00 | 14.00 | 14.00 |
-| `asinh` | 13.72 | 14.00 | 14.00 | 14.00 |
-| `atanh` | 12.64 | 14.00 | 14.00 | 13.92 |
-| `pow` | 11.91 | 14.00 | 13.29 | 13.31 |
-| `hypot` | 13.52 | 14.00 | 14.00 | 14.00 |
-| `fmod` | 6.10 | 14.00 | 13.72 | 13.50 |
-| `remainder` | 6.10 | 14.00 | 13.40 | 13.28 |
-| `copysign` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `fmax` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `fmin` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `fdim` | 8.59 | 14.00 | 14.00 | 13.99 |
-| `fma` | 9.78 | 14.00 | 14.00 | 13.99 |
-| `ceil` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `floor` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `round` | 14.00 | 14.00 | 14.00 | 14.00 |
-| `trunc` | 14.00 | 14.00 | 14.00 | 14.00 |
+| Op | Min | Max | Median | Mean | Ops |
+|---|---|---|---|---|---|
+| `add` | 13.96 | 14.00 | 14.00 | 14.00 | 11 |
+| `sub` | 8.81 | 14.00 | 14.00 | 13.96 | 12 |
+| `mul` | 13.81 | 14.00 | 14.00 | 14.00 | 48 |
+| `div` | 13.60 | 14.00 | 14.00 | 14.00 | 54 |
+| `sqrt` | 13.51 | 14.00 | 14.00 | 14.00 | 61 |
+| `abs` | 14.00 | 14.00 | 14.00 | 14.00 | 3 |
+| `exp` | 10.42 | 14.00 | 13.43 | 13.41 | 1085 |
+| `log` | 13.92 | 14.00 | 14.00 | 14.00 | 2326 |
+| `exp2` | 12.13 | 14.00 | 13.39 | 13.41 | 1133 |
+| `exp10` | 12.18 | 14.00 | 13.37 | 13.40 | 1133 |
+| `expm1` | 12.35 | 14.00 | 14.00 | 13.79 | 1098 |
+| `log2` | 13.80 | 14.00 | 14.00 | 14.00 | 2380 |
+| `log10` | 13.78 | 14.00 | 14.00 | 14.00 | 2380 |
+| `log1p` | 13.92 | 14.00 | 14.00 | 14.00 | 2337 |
+| `sin` | 8.74 | 14.00 | 13.82 | 13.72 | 2086 |
+| `cos` | 8.16 | 14.00 | 13.80 | 13.72 | 2086 |
+| `tan` | 12.86 | 14.00 | 14.00 | 13.95 | 1934 |
+| `asin` | 12.21 | 14.00 | 13.97 | 13.84 | 6893 |
+| `acos` | 9.10 | 14.00 | 14.00 | 13.93 | 6893 |
+| `atan` | 13.70 | 14.00 | 14.00 | 14.00 | 6771 |
+| `sinh` | 12.33 | 14.00 | 13.66 | 13.63 | 1250 |
+| `cosh` | 12.53 | 14.00 | 13.68 | 13.65 | 1250 |
+| `tanh` | 12.56 | 14.00 | 14.00 | 13.96 | 1207 |
+| `acosh` | 13.99 | 14.00 | 14.00 | 14.00 | 2459 |
+| `asinh` | 13.72 | 14.00 | 14.00 | 14.00 | 2458 |
+| `atanh` | 12.64 | 14.00 | 14.00 | 13.92 | 2448 |
+| `pow` | 11.91 | 14.00 | 13.29 | 13.31 | 3460 |
+| `hypot` | 13.52 | 14.00 | 14.00 | 14.00 | 168 |
+| `fmod` | 6.10 | 14.00 | 13.72 | 13.50 | 138 |
+| `remainder` | 6.10 | 14.00 | 13.40 | 13.28 | 122 |
+| `copysign` | 14.00 | 14.00 | 14.00 | 14.00 | 6 |
+| `fmax` | 14.00 | 14.00 | 14.00 | 14.00 | 2 |
+| `fmin` | 14.00 | 14.00 | 14.00 | 14.00 | 2 |
+| `fdim` | 8.59 | 14.00 | 14.00 | 13.99 | 14 |
+| `fma` | 9.78 | 14.00 | 14.00 | 13.99 | 59 |
+| `ceil` | 14.00 | 14.00 | 14.00 | 14.00 | 22 |
+| `floor` | 14.00 | 14.00 | 14.00 | 14.00 | 23 |
+| `round` | 14.00 | 14.00 | 14.00 | 14.00 | 8 |
+| `trunc` | 14.00 | 14.00 | 14.00 | 14.00 | 24 |
 
 #### QF (quad-float) — ceiling 29.00 digits
 
-| Op | Min | Max | Median | Mean |
-|---|---|---|---|---|
-| `add` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `sub` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `mul` | 28.27 | 29.00 | 29.00 | 29.00 |
-| `div` | 27.65 | 29.00 | 29.00 | 28.99 |
-| `sqrt` | 28.09 | 29.00 | 29.00 | 29.00 |
-| `abs` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `exp` | 10.42 | 29.00 | 27.95 | 26.03 |
-| `log` | 27.97 | 29.00 | 29.00 | 28.99 |
-| `exp2` | 14.92 | 29.00 | 27.97 | 26.83 |
-| `exp10` | 14.98 | 29.00 | 27.93 | 26.81 |
-| `expm1` | 26.32 | 29.00 | 29.00 | 28.54 |
-| `log2` | 27.96 | 29.00 | 29.00 | 28.99 |
-| `log10` | 27.97 | 29.00 | 29.00 | 28.99 |
-| `log1p` | 27.97 | 29.00 | 29.00 | 28.99 |
-| `sin` | 23.29 | 29.00 | 28.62 | 28.56 |
-| `cos` | 22.85 | 29.00 | 28.61 | 28.56 |
-| `tan` | 27.41 | 29.00 | 29.00 | 28.88 |
-| `asin` | 27.09 | 29.00 | 28.76 | 28.68 |
-| `acos` | 24.22 | 29.00 | 29.00 | 28.85 |
-| `atan` | 28.19 | 29.00 | 29.00 | 28.98 |
-| `sinh` | 26.39 | 29.00 | 28.19 | 28.21 |
-| `cosh` | 26.39 | 29.00 | 28.20 | 28.23 |
-| `tanh` | 26.55 | 29.00 | 29.00 | 28.87 |
-| `acosh` | 27.88 | 29.00 | 29.00 | 28.98 |
-| `asinh` | 27.70 | 29.00 | 29.00 | 28.96 |
-| `atanh` | 26.66 | 29.00 | 29.00 | 28.71 |
-| `pow` | 25.79 | 29.00 | 27.71 | 27.76 |
-| `hypot` | 28.12 | 29.00 | 29.00 | 29.00 |
-| `fmod` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `remainder` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `copysign` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `fmax` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `fmin` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `fdim` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `fma` | 24.65 | 29.00 | 29.00 | 28.99 |
-| `ceil` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `floor` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `round` | 29.00 | 29.00 | 29.00 | 29.00 |
-| `trunc` | 29.00 | 29.00 | 29.00 | 29.00 |
+| Op | Min | Max | Median | Mean | Ops |
+|---|---|---|---|---|---|
+| `add` | 29.00 | 29.00 | 29.00 | 29.00 | 88 |
+| `sub` | 29.00 | 29.00 | 29.00 | 29.00 | 92 |
+| `mul` | 28.27 | 29.00 | 29.00 | 29.00 | 214 |
+| `div` | 27.65 | 29.00 | 29.00 | 28.99 | 643 |
+| `sqrt` | 28.09 | 29.00 | 29.00 | 29.00 | 3137 |
+| `abs` | 29.00 | 29.00 | 29.00 | 29.00 | 5 |
+| `exp` | 10.42 | 29.00 | 27.95 | 26.03 | 11754 |
+| `log` | 27.97 | 29.00 | 29.00 | 28.99 | 36463 |
+| `exp2` | 14.92 | 29.00 | 27.97 | 26.83 | 11968 |
+| `exp10` | 14.98 | 29.00 | 27.93 | 26.81 | 11968 |
+| `expm1` | 26.32 | 29.00 | 29.00 | 28.54 | 11847 |
+| `log2` | 27.96 | 29.00 | 29.00 | 28.99 | 37106 |
+| `log10` | 27.97 | 29.00 | 29.00 | 28.99 | 37106 |
+| `log1p` | 27.97 | 29.00 | 29.00 | 28.99 | 36551 |
+| `sin` | 23.29 | 29.00 | 28.62 | 28.56 | 20044 |
+| `cos` | 22.85 | 29.00 | 28.61 | 28.56 | 20044 |
+| `tan` | 27.41 | 29.00 | 29.00 | 28.88 | 18793 |
+| `asin` | 27.09 | 29.00 | 28.76 | 28.68 | 65309 |
+| `acos` | 24.22 | 29.00 | 29.00 | 28.85 | 65309 |
+| `atan` | 28.19 | 29.00 | 29.00 | 28.98 | 61865 |
+| `sinh` | 26.39 | 29.00 | 28.19 | 28.21 | 12587 |
+| `cosh` | 26.39 | 29.00 | 28.20 | 28.23 | 12587 |
+| `tanh` | 26.55 | 29.00 | 29.00 | 28.87 | 12583 |
+| `acosh` | 27.88 | 29.00 | 29.00 | 28.98 | 39995 |
+| `asinh` | 27.70 | 29.00 | 29.00 | 28.96 | 39991 |
+| `atanh` | 26.66 | 29.00 | 29.00 | 28.71 | 37294 |
+| `pow` | 25.79 | 29.00 | 27.71 | 27.76 | 48432 |
+| `hypot` | 28.12 | 29.00 | 29.00 | 29.00 | 3653 |
+| `fmod` | 29.00 | 29.00 | 29.00 | 29.00 | 952 |
+| `remainder` | 29.00 | 29.00 | 29.00 | 29.00 | 976 |
+| `copysign` | 29.00 | 29.00 | 29.00 | 29.00 | 10 |
+| `fmax` | 29.00 | 29.00 | 29.00 | 29.00 | 2 |
+| `fmin` | 29.00 | 29.00 | 29.00 | 29.00 | 2 |
+| `fdim` | 29.00 | 29.00 | 29.00 | 29.00 | 94 |
+| `fma` | 24.65 | 29.00 | 29.00 | 28.99 | 302 |
+| `ceil` | 29.00 | 29.00 | 29.00 | 29.00 | 2 |
+| `floor` | 29.00 | 29.00 | 29.00 | 29.00 | 2 |
+| `round` | 29.00 | 29.00 | 29.00 | 29.00 | 27 |
+| `trunc` | 29.00 | 29.00 | 29.00 | 29.00 | 3 |
 
 The mean-gated regression versions of these measurements live in
 `dd_accuracy_test`, `ff_accuracy_test`, and `qf_accuracy_test`, which assert a
 per-operation floor rather than merely reporting numbers.
+
+#### Op-count convention
+
+1. **What counts as one op.** Every `+`, `-`, `*`, `/`, `fma`, `sqrt`, and every
+   comparison or select on a native-precision value counts as 1 op at the
+   backend's baseline — FP64 for DD, FP32 for FF and QF.
+2. **Error-free transforms are fully inlined.** A `two_sum` expands to its 6
+   component ops, a `two_prod` to its 17. No structured breakdown appears in the
+   table; each cell is a single integer. The repository compiles with FMA
+   contraction off — the main `CMakeLists.txt` sets no contraction flag and GCC
+   defaults to `-ffp-contract=off` for standard C++ — and the headers implement
+   `two_prod` as an explicit Dekker split with no FMA path, so the non-FMA count
+   applies throughout.
+3. **libm calls count as 1 op** at baseline precision; this represents one
+   hardware-approximate elementary function evaluation, not literal cycle cost.
+   Where an operation seeds from libm and refines, the count is 1 + the
+   correction ops.
+4. **Constant-table loads are 0 ops** — they are loads, not arithmetic.
+   Polynomial evaluation counts each individual multiply and add.
+5. **Branches follow the general-case path** — the branch most finite,
+   well-behaved inputs take for that operation's input range in the accuracy
+   demo. Fast-path shortcuts for special values are not counted.
+6. **Iterative refinement is counted at the iteration count the code actually
+   runs.** Fixed loops count their trip count; convergence-checked loops count
+   the typical case for the demo's input distribution. Series counts therefore
+   depend on the reduced argument range and on each backend's convergence
+   epsilon, which is why the same operation can differ across backends by more
+   than the word count alone.
+7. **Counts are positive integers**; no fractional counts are reported.
+
+These are static algorithmic counts. They describe arithmetic volume, not
+runtime — they ignore instruction-level parallelism, memory effects, and the
+serial dependency chains that dominate renormalization-heavy code.
 
 ## Section 3 — Repository layout
 
@@ -249,11 +286,6 @@ scripts/               build helpers, coefficient generators, run-all scripts
 PORT_NOTES.md          port-specific fixes and design lessons
 LICENSE, NOTICE.md, LICENSES/   licensing — see Section 7
 ```
-
-| Branch | Purpose |
-|---|---|
-| `main` | Active development. DD + FF + QF backends, tests, docs, demos. |
-| `CUDAFP128Kokkos` | Separate historical / experimental branch (out of scope for this README). |
 
 ## Section 4 — Demos
 
@@ -294,10 +326,9 @@ Convenience wrappers for whole-inventory sweeps:
 ./scripts/run_all_complex_ops.sh      # DD complex
 ./scripts/run_all_ff_ops.sh           # FF real
 ./scripts/run_all_ff_complex_ops.sh   # FF complex
+./scripts/run_all_qf_ops.sh           # QF real
+./scripts/run_all_qf_complex_ops.sh   # QF complex
 ```
-
-There are no run-all wrappers for the QF demos; invoke `kokkos_ep_demo_qf` and
-`kokkos_ep_demo_qf_complex` directly, which sweep all operations by default.
 
 ## Section 5 — Tests
 
@@ -346,13 +377,17 @@ cmake -B build -DCMAKE_PREFIX_PATH=<kokkos-install-dir>
 cmake --build build -j$(nproc)
 ```
 
-On Argonne systems, load modules first and let the helper script fetch and
-install Kokkos:
+On the JLSE testbed maintained by CELS at Argonne National Lab, load modules
+first and let the helper script fetch and install Kokkos:
 
 ```bash
-source scripts/prepare.sh                      # Argonne modules
+source scripts/prepare.sh                      # JLSE modules
 source scripts/build_with_kokkos.sh <install-dir>
 ```
+
+`scripts/prepare.sh` is JLSE-specific — it hardcodes JLSE module names and
+paths. Other Argonne resources (Polaris, Aurora, Improv) will need their own
+module recipe; the rest of the build flow is portable.
 
 Kokkos raises the C++ standard to C++20 through its exported interface, and
 `libquadmath` (the host accuracy oracle) is x86_64-only — CMake enforces the
