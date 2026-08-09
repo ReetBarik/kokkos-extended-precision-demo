@@ -2061,6 +2061,140 @@ screenful each.
   rejection-sampling method lesson), B6 (identity-is-the-bug lens; established
   inline §4x shipping post-consolidation).
 
+**B11: FF divide() + divide_scalar() non-finite-divisor precondition. (DONE)**
+
+- Executed 2026-08-09. Task commit `6fdf719`; merged to `main` by FAST-FORWARD, so
+  there is no separate merge SHA — `6fdf719` is both the task commit and main's
+  tip at close. (B9/B10 used `--no-ff` merge commits; this one did not, per the
+  merge brief's "fast-forward if possible". Noted so the pattern break is on the
+  record and nobody hunts for a missing merge commit.)
+- **Origin.** Filed by B10 (commit `3ca298e`) as its "NEW BACKLOG ITEM, found not
+  fixed" (:2046-2050) and in PORT_NOTES §4k "Related backlog". B10 correctly
+  declined to widen: the defect is divisor-side (§4d/§B8 territory), and B10's
+  design pass was quotient-side.
+- **Root cause — B8's own guard, firing on an input it was never designed for.**
+  The divisor guard classifies on `|b.hi| > kSplitOverflowThresh`, which is TRUE
+  for `b.hi = ±inf`, so it scales the divisor by `2^-64` — and `inf * 2^-64` is
+  still `inf`. The unchanged Dekker split then computes `conb = inf * split = inf`
+  and `b1 = conb - (conb - b.hi) = inf - inf = NaN`. `divide(1.0f, inf)` returned
+  NaN where IEEE 754-2019 §6.1 requires `+0`.
+  Worth recording: **the quotient path was already correct.** `s1 = a.hi / b.hi`
+  evaluates to the right `±0`; it just gets discarded by the NaN coming out of the
+  divisor's split. Nothing needed to be computed differently — only reached
+  differently.
+- **`third_party/include/ff_math.hpp` (edit, +28/-0, 2 code lines).** One
+  precondition at the top of each of `divide()` and `divide_scalar()`, ahead of
+  every splitter by construction:
+
+      if (!Kokkos::isfinite(b.hi)) return FloatFloat(a.hi / b.hi, 0.0f);
+
+  The bare float quotient IS the whole answer for every non-finite divisor:
+  `finite/±inf` gives a correctly-signed zero (including `±0/±inf`, where IEEE
+  preserves the numerator's zero sign), `±inf/±inf` gives NaN, and a NaN divisor
+  propagates. `lo = 0.0f` because the result is exact — B10's Zone C convention.
+- **Design decisions worth noting explicitly:**
+  - **Return the quotient, NOT a `copysign` form.** The brief suggested
+    `copysign(0.0f, a.hi / b.hi)`. That is wrong: it flattens the invalid
+    `inf/inf` case to a signed zero instead of leaving it NaN, silently breaking
+    a case the same brief separately asked to preserve. Returning the quotient
+    directly yields all four sign combinations AND both invalid cases from one
+    IEEE operation, with no case analysis to get wrong. See DEV1.
+  - **Divide-by-ZERO deliberately untouched.** `b.hi = 0` is finite, falls
+    through the guard, and keeps B10's Zone C semantics (`±inf` for a nonzero
+    numerator, NaN for `0/0`). The two questions look adjacent and are not: Zone C
+    is about a quotient too large to represent; B11 is about a divisor that breaks
+    the splitter. Verified by regression rows, not by inspection alone.
+  - **Precondition, not another zone.** B8/B9/B10 all scale-and-unscale. B11 does
+    not, because there is nothing to recover — the answer is exact and needs no FF
+    arithmetic. Cheapest correct fix, and it cannot perturb any finite path.
+- **Verification.**
+  - Finite-divisor bit-identity: **20,000,625 pairs per function, 0 mismatches**
+    at both sites, single-binary A/B vs verbatim pre-B11 bodies (B9/B10
+    methodology — one TU, so both sides share inlining context and FP flags).
+    Sampling spans the FULL finite exponent range with rejection on non-finite, so
+    it covers Zones A, B and C — strictly more than the "Zone A" the brief asked
+    for — plus a 24×24 edge grid (±0, ±FLT_MIN, ±denorm_min, ±FLT_MAX, both sides
+    of the 4.1528233e34 threshold, 8193, 1e35).
+  - **Harness validity (positive control).** "0 mismatches" is worthless from a
+    comparator that cannot see a difference, so the same comparator was pointed at
+    non-finite divisors, where pre/post MUST differ: 36 compared, 36 mismatches.
+    Recorded because prior B-tasks asserted bit-identity without this check.
+  - IEEE cases, pre → post, both functions: `divide(±1, +inf)` NaN → ±0;
+    `divide(±1, -inf)` NaN → ∓0; `divide(±0, ±inf)` NaN → ±0 with the numerator's
+    zero sign preserved; subnormal / FLT_MIN / 1e-30 / 1e30 / 1e35 / FLT_MAX over
+    ±inf all NaN → correctly-signed 0; `divide(±inf, ±inf)` NaN → NaN (unchanged,
+    correct); NaN divisor NaN → NaN (unchanged, correct); divide-by-zero ±inf →
+    ±inf (Zone C, unchanged). No case raised an exception.
+  - **New test is RED pre-fix, GREEN post-fix.** Built against pre-B11
+    `ff_math.hpp` it fails **34 of 62** checks (every inf-divisor row, both
+    functions) and exits RC=1; against the fixed header, 62/62 PASS, RC=0. The 28
+    NaN-divisor and divide-by-zero rows pass in BOTH builds, which is what
+    confirms the blast radius is confined to inf divisors.
+  - ff_accuracy_test: **byte-identical** pre vs post (all rows, min/mean/status —
+    a clean `diff`, unlike B10, which had the -0.00 tie-break quirk).
+  - **No measurable cost** despite sitting in a hot primitive: ff_accuracy_test at
+    `-O3` runs 138.16s pre vs 137.75s post (0.3% faster, i.e. noise), reproducible
+    across repeat runs.
+  - Full ctest: **23/23 PASS, RC=0** in both trees — `build/` (no `-O3`) 1613.93s,
+    `build_opt/` (`-O3 -DNDEBUG`) 630.01s. All six demos RC 0, zero NaN mentions.
+  - DD/QF insulated by construction — re-confirmed that `dd_math.hpp`,
+    `qf_math.hpp` and `qf_complex.hpp` name `ff_math.hpp` only in COMMENTS and
+    `#include` no FF header (the careless-grep trap §4j warned about).
+- **DEVIATION 1 — the brief's suggested fix form was wrong, and was not used.**
+  `copysign(0.0f, a.hi / b.hi)` breaks `inf/inf`. Rationale above. Reported rather
+  than silently substituted.
+- **DEVIATION 2 — a test file WAS touched, unlike every prior B-task.** B1–B10 all
+  close with "all of `tests/` untouched". B11 extends
+  `tests/ff_property_test.cpp` with **Group S**, an explicit IEEE expectation
+  table for divide/divide_scalar (31 cases × 2 functions = 62 checks), gated by
+  `KOKKOS_EP_ASSERT` alongside Group A and running unconditionally (no
+  `__float128` needed — this is exact-semantics checking, not accuracy-vs-oracle).
+  Sanctioned by the task brief, which preferred extending an existing test over
+  adding a file. No tolerance and no accuracy gate changed.
+  Group S is a **table, not a computed reference**: the point is to encode what
+  IEEE mandates independently, rather than recompute the quotient with the same
+  primitive under test.
+- **Why this survived B8, B9 AND B10 — the coverage hole is the real finding.**
+  Group A's corpus sets `include_zero = true, include_inf = false, include_nan =
+  false`, and `ff_invariant_test` SKIPS non-finite `hi` by construction (its
+  non-overlap invariant is undefined there). Between them, **no FF test had ever
+  pinned down what division does with an infinite divisor.** Three consecutive
+  splitter tasks worked in that blind spot. Worth remembering when the next
+  primitive gets a guard: check whether any test can see the guarded input class
+  at all.
+- **DEVIATION 3 — the merge brief's "item 2" did not exist; nothing was landed for
+  it.** The brief described a "B9 DEV3 multiply-splitter followup". B9's DEVIATION
+  3 is "no shared helper" (:1903-1904), which carries no deferred work. The
+  multiply-splitter-in-a-special-function-chain item is **B6 DEV3** (:1551-1562,
+  backlog at :1589-1592), and **B9 is the task that closed it** — B9's commit
+  message closes that backlog entry by name. All five Dekker-splitter sites in
+  `ff_math.hpp` are guarded today (grepped, not assumed): multiply (both
+  operands), multiply_scalar, two_prod, divide (divisor B8 / quotient B10),
+  divide_scalar (divisor B9 / quotient B10). Reported and stopped rather than
+  inventing a defect to fix.
+- **Rule 4.** `third_party/include/ff_math.hpp` and — by explicit sanction —
+  `tests/ff_property_test.cpp`. `ff_complex.hpp`, `dd_math.hpp`, `dd_complex.hpp`,
+  `qf_math.hpp`, `qf_complex.hpp` untouched. No tolerance changed; no accuracy
+  gate touched. PORT_NOTES §4l shipped inline in the task commit.
+- **Backlog after this closes.** Both remaining items are cosmetic and were closed
+  in the post-B11 cleanup pass (see below), not by a B-task: (a)
+  `tests/ff_eft_test.cpp:16, 127` line-ref drift — flagged by B9, re-filed by B10,
+  moved again by B11; (b) a stale parenthetical in `ff_math.hpp`'s erfc block
+  claiming multiply's splitter was never scaled, which B9 falsified. **No library
+  defect remains open across FF, DD or QF.**
+- Depends on B8 (the guard whose ±inf blind spot this closes), B10 (filed the
+  item; its Zone C convention for `lo` and its untouched divide-by-zero path are
+  both reused), B9 (single-binary A/B bit-identity methodology).
+- **NUMBERING NOTE — "B11" is overloaded, and this is the second time.** This
+  block is B11 in the **library-fix B-series** (B1…B11). There is an unrelated
+  **B11 in T2.3's property-test identity numbering** — `pow(a,2) ≈ a·a`, at
+  :2515 and :3349. Different namespace, same digit, no relation. B9 hit exactly
+  this collision with its own digit (`exp(a)·exp(−a) ≈ 1`, :583) and recorded the
+  warning only in its commit message, where it was easy to miss — so it is on the
+  page this time. The two series are not going to stop colliding; read the
+  surrounding section, not the digit.
+- Cross-ref: PORT_NOTES.md §4l.
+
 ### Phase 2 — FF validation (6 tasks)
 
 FF library is already implemented on `fffunKokkos`. Phase 2 = validate
