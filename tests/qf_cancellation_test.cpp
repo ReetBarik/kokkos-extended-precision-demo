@@ -48,8 +48,8 @@
 // defect), NOT silently re-gated — same posture as T1.6/T2.6.
 //
 // WHY A QF-LOCAL kMaxDig (not BackendTraits<QF>::max_digits).  test_utils.hpp
-// carries BackendTraits<DD> and <FF> but NOT <QF> (test_utils.hpp:81 is a
-// TODO(Phase 3) placeholder; the primary template is undefined). Rather than touch
+// carries BackendTraits<DD> and <FF> but NOT <QF> (its backend-tag block has a
+// TODO(Phase 3) placeholder for QF; the primary template is undefined). Rather than touch
 // the shared harness other tasks own (rule 1/4), this file carries the QF-local
 // kMaxDig / qf_to_q / qf_digits helpers directly — IDENTICAL to qf_accuracy_test
 // (T3.4) and qf_property_test (T3.3), which established this pattern. kMaxDig = 29.0

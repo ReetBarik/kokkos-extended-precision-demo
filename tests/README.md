@@ -234,8 +234,8 @@ own results are meaningful.)
 
 `ff_eft_test.cpp` (T2.1) is the FF analogue of `dd_eft_test.cpp`. It tests the
 same two transforms at the raw-`float` level — the twoSum embedded in `FloatFloat`
-`add` (`ff_math.hpp:174-181`) and the Dekker twoProduct embedded in `multiply`
-(`ff_math.hpp:193-207`, ≡ `two_prod` `ff_math.hpp:266-274`), mirrored into the test
+`add` and the Dekker twoProduct embedded in `multiply`
+(≡ the standalone `two_prod`), mirrored into the test
 file for RAW floats; `ff_math.hpp` is not modified. It reuses the same four corpora
 (broad random `[-1e30f,1e30f]`, narrow random `[-1,1]`, `|a|≫|b|` with `k∈[1,20]`,
 full `corpus::unary<float>()` cross-product), named hard cases, and device-parity
@@ -259,7 +259,8 @@ splitter-overflow mechanism), and products that overflow or gradually underflow
 mirror is T2.5.
 
 > **Splitter naming.** The shipped FF splitter is `8193.0f`, which is **2¹³ + 1**
-> (not 2¹² + 1 = 4097). The `ff_math.hpp:192` comment states this correctly; a stale
+> (not 2¹² + 1 = 4097). The comment above `multiply`'s splitter states this
+> correctly; a stale
 > "2^12+1" typo in the `ff_math.hpp` license header and in the T2.1 task text is
 > noted but not fixed here (T2.1 does not modify `ff_math.hpp`).
 
@@ -273,8 +274,8 @@ primitives. **Two structural differences from T2.1:**
    twoProduct into the test because `ff_math.hpp` embeds them inside longer
    `add`/`multiply` sequences. `qf_math.hpp` instead **exposes** the shipped
    primitives as free functions in `Kokkos::Experimental` — `qf_two_sum`,
-   `qf_quick_two_sum`, `qf_two_prod`, `qf_two_sqr` (`qf_math.hpp:118-158`) and
-   `renorm` / `renorm_4` (`qf_math.hpp:182-257`) — so this test calls the **actual
+   `qf_quick_two_sum`, `qf_two_prod`, `qf_two_sqr` and
+   `renorm` / `renorm_4` — so this test calls the **actual
    shipped code**, a strictly stronger check (a mirror can drift; a direct call
    cannot). `qf_math.hpp` is not modified (rule 4).
 2. **`renorm_4` has no FF analogue.** FF's two-word type never renormalizes a wide
@@ -297,7 +298,8 @@ precondition); `qf_two_sqr` reuses the twoProd domain on `(a,a)`.
   primary gate.
 - **Wide spread (quadmath, behind the guard):** words span the full ~96-bit range so
   `renorm` genuinely truncates; the residual is checked against QF's truncation
-  threshold **rel ≤ 2⁻⁸⁸** (256× margin above `u = 2⁻⁹⁶`, `qf_math.hpp:11`). SKIPs
+  threshold **rel ≤ 2⁻⁸⁸** (256× margin above `u = 2⁻⁹⁶`, per `qf_math.hpp`'s
+  header precision note). SKIPs
   cleanly without LIBQUADMATH — the exact FP64 bounded test still gates.
 
 The **Priest non-overlap invariant** `|f_{i+1}| ≤ ½ ulp(f_i)` (bit form

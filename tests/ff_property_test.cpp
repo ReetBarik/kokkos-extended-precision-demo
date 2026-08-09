@@ -47,7 +47,7 @@
 //
 //   * A7 mul-commutativity is DEMOTED to Group B (B0), same reason as DD:
 //     multiply()'s Dekker cross-term sum c21 adds a1*b2 and a2*b1 in a FIXED
-//     a-first order (ff_math.hpp:193-208), so swapping operands reorders two
+//     a-first order (in `multiply`), so swapping operands reorders two
 //     addends and FP addition is not associative.
 //
 //   * Denormal-tail audit. Group A compares raw FP32 (hi,lo) pairs, so a result

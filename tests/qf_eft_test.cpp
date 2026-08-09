@@ -34,7 +34,7 @@
 //     call. qf_math.hpp is different: it EXPOSES the shipped primitives as free
 //     functions in namespace Kokkos::Experimental —
 //        qf_two_sum, qf_quick_two_sum, qf_two_prod, qf_two_sqr
-//        (qf_math.hpp:118-158)  and  renorm / renorm_4  (qf_math.hpp:182-257).
+//        and  renorm / renorm_4.
 //     So this test calls the ACTUAL shipped code, not a mirror of it. That is a
 //     strictly stronger test: a mirror can drift from the header; a direct call
 //     cannot. (Rule 4 is trivially respected — we only #include, never edit.)
@@ -143,24 +143,24 @@ namespace qf = Kokkos::Experimental;
 // ----------------------------------------------------------------------------
 inline bool sum_is_exact(float a, float b) {
     float e;
-    float s = qf::qf_two_sum(a, b, e);                 // shipped: qf_math.hpp:126
+    float s = qf::qf_two_sum(a, b, e);                 // shipped primitive, called directly
     return (double)s + (double)e == (double)a + (double)b;
 }
 // quick_two_sum is only exact under its precondition |a| >= |b|. Caller must
 // order the operands; check_pair does so before invoking.
 inline bool quick_sum_is_exact(float a, float b) {
     float e;
-    float s = qf::qf_quick_two_sum(a, b, e);           // shipped: qf_math.hpp:118
+    float s = qf::qf_quick_two_sum(a, b, e);           // shipped primitive, called directly
     return (double)s + (double)e == (double)a + (double)b;
 }
 inline bool prod_is_exact(float a, float b) {
     float e;
-    float p = qf::qf_two_prod(a, b, e);                // shipped: qf_math.hpp:139
+    float p = qf::qf_two_prod(a, b, e);                // shipped primitive, called directly
     return (double)p + (double)e == (double)a * (double)b;
 }
 inline bool sqr_is_exact(float a) {
     float e;
-    float q = qf::qf_two_sqr(a, e);                    // shipped: qf_math.hpp:150
+    float q = qf::qf_two_sqr(a, e);                    // shipped primitive, called directly
     return (double)q + (double)e == (double)a * (double)a;
 }
 
@@ -179,7 +179,7 @@ inline bool sum_in_domain(float a, float b) {
     return std::isfinite(a + b);
 }
 
-// Splitter-overflow bound, DERIVED from qf_two_prod's body (qf_math.hpp:140-141):
+// Splitter-overflow bound, DERIVED from qf_two_prod's body:
 // the first FP32 op is `cona = a * split` with split = 8193.0f. That overflows to
 // +inf once |a| * 8193 > FLT_MAX, i.e. |a| >= FLT_MAX / 8193 (~2^114.9998); then
 // `cona - (cona - a)` becomes inf - inf = NaN and the error term is poisoned. We
@@ -436,7 +436,7 @@ static RenormResult test_renorm_4_bounded(int n, uint64_t seed) {
         float c[5];
         double x = draw_ordered_double(g, c);
         float b0 = c[0], b1 = c[1], b2 = c[2], b3 = c[3], b4 = c[4];
-        qf::renorm_4(b0, b1, b2, b3, b4);              // shipped: qf_math.hpp:212
+        qf::renorm_4(b0, b1, b2, b3, b4);              // shipped primitive, called directly
         ++R.tested;
         int local_skips = 0;
         if (!nonoverlap_holds(b0, b1, b2, b3, &local_skips)) {
@@ -479,7 +479,7 @@ static RenormResult test_renorm_bounded(int n, uint64_t seed) {
         double r = x; float c[4];
         for (int k = 0; k < 4; ++k) { c[k] = (float)r; r -= (double)c[k]; }
         float b0 = c[0], b1 = c[1], b2 = c[2], b3 = c[3];
-        qf::renorm(b0, b1, b2, b3);                    // shipped: qf_math.hpp:182
+        qf::renorm(b0, b1, b2, b3);                    // shipped primitive, called directly
         ++R.tested;
         int local_skips = 0;
         if (!nonoverlap_holds(b0, b1, b2, b3, &local_skips)) {
@@ -792,7 +792,7 @@ int main(int argc, char** argv) {
     {
         std::printf("=== qf_eft_test (T3.1): EFT bit-exactness for QF twoSum / twoProd / twoSqr / renorm ===\n");
         std::printf("Oracle: FP64 (exact for twoSum/twoProd/twoSqr and ordered-53-bit-source renorm value-preservation)\n");
-        std::printf("Splitter: 8193.0f = 2^13 + 1 (qf_math.hpp:140); primitives called directly from qf_math.hpp\n\n");
+        std::printf("Splitter: 8193.0f = 2^13 + 1 (qf_math.hpp `qf_two_prod`); primitives called directly from qf_math.hpp\n\n");
 
         // -- Test A: qf_two_sum + qf_quick_two_sum --------------------------
         std::printf("[Test A] qf_two_sum bit-exactness\n");

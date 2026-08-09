@@ -104,7 +104,7 @@
 // its Taylor iteration limit (FFCSSNR) for tiny nonzero arguments and forced a
 // LOWER trig bound (|x| >= 1e-25).  QF's sincos uses eps = 1e-28 (coarser than
 // u = 2^-96) and converges in ~9 terms at nq=5 with NO return-0 on the iteration
-// cap (qf_math.hpp:920-959), so QF has NO tiny-argument stall — the QF trig
+// cap (see `sincos` in qf_math.hpp), so QF has NO tiny-argument stall — the QF trig
 // family needs no lower bound (0 and arbitrarily-small |x| are both fine); the
 // only bound is the |a.f0| >= 1e30 "argument too large" guard.
 //

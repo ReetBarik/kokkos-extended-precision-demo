@@ -384,7 +384,7 @@ int main(int argc, char** argv) {
        [](float128 x){ return Kokkos::sqrt(x); }, corpus_unary_all},
 
       // round-family: TIES-TO-EVEN in ff_math.hpp -> oracle is nearbyint, NOT
-      // round (ff_math.hpp:290 round_to_nearest_int; :686 round). Bound: exact for
+      // round (`round_to_nearest_int`; `round` forwards to it). Bound: exact for
       // |x|<2^47 (result is an integer, representable). T2.2 gates |x|<1e13.
       {"round_to_nearest_int",
        [](double x){ return std::isfinite(x) && std::fabs(x) < 1e13; },
@@ -606,8 +606,8 @@ int main(int argc, char** argv) {
 
     std::vector<BinaryOp> binary_ops = {
       // add/subtract: near-cancellation loses leading digits (matches FP32) ->
-      // registry sub/... Bound: <=2u² away from cancellation (twoSum-based add;
-      // ff_math.hpp:174-182).
+      // registry sub/... Bound: <=2u² away from cancellation (twoSum-based
+      // `add`).
       {"add",      dom2_any, uniform(-1e8, 1e8), uniform(-1e8, 1e8),
        [](ff::FloatFloat a, ff::FloatFloat b){ return ff::add(a, b); },
        [](float128 a, float128 b){ return a + b; }, corpus_binary_all},

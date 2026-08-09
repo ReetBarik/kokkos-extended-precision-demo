@@ -11,7 +11,7 @@
 //   qf_two_prod(a,b)  ->  p = fl(a*b),  e = ((a1*b1 - p) + a1*b2 + a2*b1) + a2*b2
 //   qf_two_sqr (a)    ->  q = fl(a*a),  e = ((hi*hi  - q) + 2*hi*lo)      + lo*lo
 //                                             ^^^^^^^^^^^ the contraction hazard
-//   (qf_math.hpp:139-158; Veltkamp splitter 8193.0f = 2^13 + 1.)
+//   (in qf_two_prod / qf_two_sqr; Veltkamp splitter 8193.0f = 2^13 + 1.)
 //
 // If the compiler CONTRACTS `a1*b1 - p` (resp. `hi*hi - q`) into a single fused
 // multiply-add, the rounding Dekker's algebra depends on never happens and the
@@ -45,7 +45,7 @@
 //     the test file because ff_math.hpp embeds it inside multiply() — there is no
 //     standalone primitive to call. qf_math.hpp is different: it EXPOSES the
 //     shipped primitives as free functions (qf_two_prod / qf_two_sqr / qf_two_sum,
-//     qf_math.hpp:118-158). So this test calls the ACTUAL shipped code under the ON
+//     free functions). So this test calls the ACTUAL shipped code under the ON
 //     flags — which is strictly stronger for a contraction guard: it characterizes
 //     whether GCC contracts *qf_math.hpp's own source*, not a copy that could
 //     drift. This mirrors T3.1's same divergence from T2.1. (Rule 4 is trivially
@@ -166,7 +166,7 @@ static const char* kPostureName = "ON  (-ffp-contract=fast / --fmad=true)";
 // underflow floor.
 // ----------------------------------------------------------------------------
 
-// Splitter-overflow bound, DERIVED from qf_two_prod's body (qf_math.hpp:140-141):
+// Splitter-overflow bound, DERIVED from qf_two_prod's body:
 // the first FP32 op is `cona = a * split` with split = 8193.0f. That overflows to
 // +inf once |a| * 8193 > FLT_MAX, i.e. |a| >= FLT_MAX / 8193 (~2^114.9998); then
 // `cona - (cona - a)` becomes inf - inf = NaN and the error term is poisoned. (This
@@ -377,7 +377,7 @@ static GuardStat host_prod_pass(const std::vector<std::pair<float,float>>& in, i
     GuardStat c;
     for (const auto& pr : in) {
         float a = pr.first, b = pr.second;
-        float e; float p = qf::qf_two_prod(a, b, e);        // shipped: qf_math.hpp:139
+        float e; float p = qf::qf_two_prod(a, b, e);        // shipped primitive, called directly
         classify(c, p, e, (double)a * (double)b, "twoProd", "host", a, b, samples_left);
     }
     return c;
@@ -385,7 +385,7 @@ static GuardStat host_prod_pass(const std::vector<std::pair<float,float>>& in, i
 static GuardStat host_sqr_pass(const std::vector<float>& in, int& samples_left) {
     GuardStat c;
     for (float a : in) {
-        float e; float q = qf::qf_two_sqr(a, e);            // shipped: qf_math.hpp:150
+        float e; float q = qf::qf_two_sqr(a, e);            // shipped primitive, called directly
         classify(c, q, e, (double)a * (double)a, "twoSqr", "host", a, a, samples_left);
     }
     return c;
@@ -461,7 +461,7 @@ static SumCount sum_control(const std::vector<std::pair<float,float>>& in, int& 
     for (const auto& pr : in) {
         float a = pr.first, b = pr.second;
         if (!sum_in_domain(a, b) || !sum_oracle_faithful(a, b)) { ++c.skipped; continue; }
-        float e; float s = qf::qf_two_sum(a, b, e);         // shipped: qf_math.hpp:126
+        float e; float s = qf::qf_two_sum(a, b, e);         // shipped primitive, called directly
         ++c.tested;
         if ((double)s + (double)e != (double)a + (double)b) {
             ++c.mismatches;

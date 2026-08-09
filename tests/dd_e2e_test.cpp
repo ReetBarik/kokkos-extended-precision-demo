@@ -35,7 +35,7 @@
 // PASS GATE.  mean_digits ≥ tolerance_digits, with tolerance_digits = 28.0 for the
 // arithmetic-precision comparisons: DD targets ~31.9 digits (docs/TEST_SUITE_PLAN.md
 // "Precision targets"), the harness caps reported digits at BackendTraits<DD>::
-// max_digits = 31 (test_utils.hpp:97), and we allow ~3 digits of headroom for
+// max_digits = 31, and we allow ~3 digits of headroom for
 // accumulated round-off in these composed / 10⁶-term kernels. Measured means on this
 // toolchain (GCC 13.3.0, Serial, observed empirically): K1_stable 31.00 (capped),
 // K2 29.48, K3 28.09, K4 29.56 — all clear 28.0. (K3 clears it by only ~0.09; that
